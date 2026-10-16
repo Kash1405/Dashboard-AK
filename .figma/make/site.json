@@ -1,0 +1,10 @@
+{
+  "description": "This F1 themed dashboard offers users an organized overview of their tasks, investments, and mental health, enhancing productivity and well-being.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
