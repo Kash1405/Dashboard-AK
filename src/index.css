@@ -737,3 +737,58 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .medication-section { display: grid; grid-template-columns: minmax(280px, .55fr) 1.45fr; gap: 18px; align-items: start; margin-top: 18px; }
 .medication-section .advisor-table { margin-top: 0; min-width: 0; }
 @media (max-width: 950px) { .medication-section { grid-template-columns: 1fr; } }
+
+/* ---------- Compact Advisor ---------- */
+.advisor-page .welcome { margin-bottom: 20px; }
+.advisor-page .welcome .now-line { display: block; margin-top: 4px; }
+.advisor-page .wellness-grid { grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 14px; }
+.advisor-page .wellness-main, .advisor-page .wellness-side { gap: 14px; }
+.advisor-page .panel { padding: 18px; }
+.advisor-page .panel-heading { margin-bottom: 14px; }
+.advisor-page .ratings { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.advisor-page .rating { padding: 10px 12px; }
+.advisor-page .rating div > b { font-size: 26px; }
+.advisor-page input[type="range"] { margin: 10px 0 2px; }
+.reflection-label { display: block; color: #b4b6ba; font-size: 13px; margin: 16px 0 8px; }
+.reflection-input { width: 100%; min-height: 90px; resize: vertical; background: var(--field); color: #d0d1d4; border: 1px solid #27292e; padding: 10px 12px; font-size: 13px; line-height: 1.55; border-radius: 3px; }
+.advisor-page .prompt-chips { margin: 8px 0 12px; }
+.advisor-page .med { padding: 8px 0; grid-template-columns: 30px 1fr auto; gap: 10px; }
+.advisor-page .med-icon { width: 28px; height: 28px; }
+.med-info { cursor: pointer; min-width: 0; }
+.med-details { margin: 6px 0 2px; color: #85878c; font-size: 11px; line-height: 1.5; }
+.med-details b { color: #b4b6ba; font-weight: 700; }
+.med-edit { display: grid; grid-template-columns: 1.3fr 1fr 84px 28px; gap: 6px; padding: 10px 0; border-bottom: 1px solid #25272b; }
+.med-edit textarea { grid-column: 1 / -1; }
+.med-edit input, .med-edit textarea, .compact-edit input, .compact-edit textarea { min-width: 0; border: 1px solid #34363c; background: var(--field); color: #e2e3e5; padding: 6px 8px; font-size: 12px; border-radius: 2px; resize: vertical; }
+.med-edit input { height: 30px; }
+.advisor-page .adherence { margin-top: 12px; }
+.compact-list { display: flex; flex-direction: column; }
+.compact-row { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start; padding: 7px 0; border-bottom: 1px solid #222429; }
+.compact-row:last-child { border-bottom: 0; }
+.compact-row .checkbox { width: 17px; height: 17px; margin-top: 1px; }
+.compact-row.done .checkbox { background: var(--green); border-color: var(--green); }
+.compact-row > div { cursor: pointer; min-width: 0; }
+.compact-row strong { display: block; font-size: 13px; font-weight: 400; color: #d6d7d9; }
+.compact-row.done strong { color: #6d6f75; text-decoration: line-through; }
+.compact-row span { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; color: #6d6f75; font-size: 11px; line-height: 1.5; margin-top: 2px; }
+.compact-row span.open { display: block; }
+.compact-edit { display: grid; grid-template-columns: 1fr 28px; gap: 6px; padding: 8px 0; border-bottom: 1px solid #25272b; }
+.compact-edit textarea { grid-column: 1; }
+.compact-edit .row-delete { grid-row: 1; grid-column: 2; }
+.advisor-page .insight-card .mood-bars { height: 100px; }
+.advisor-page .tracker-grid { gap: 10px; }
+.advisor-page .tracker-cat { padding: 10px 12px; }
+.tracker-cat.complete { border-color: rgba(69,211,159,.35); box-shadow: inset 3px 0 0 var(--green); }
+.domain-badge { display: inline-flex; align-items: center; gap: 4px; color: #55575c; font-size: 11px; }
+.tracker-cat.complete .domain-badge { color: var(--green); font-weight: 700; }
+.tracker-total b { background: var(--green) !important; }
+.tracker-total.all span { color: var(--green); }
+.history-row > button.ok { background: var(--green); }
+
+/* ---------- Schedule progress ---------- */
+.row-progress { display: block; height: 3px; background: #292b30; margin-top: 8px; max-width: 220px; }
+.row-progress b { display: block; height: 100%; background: var(--green); transition: width .4s; }
+.edit-table tr.row-past td { opacity: .45; }
+
+@media (max-width: 1180px) { .advisor-page .ratings { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 950px) { .advisor-page .wellness-grid { grid-template-columns: 1fr; } }
