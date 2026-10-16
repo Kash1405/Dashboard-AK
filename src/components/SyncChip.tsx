@@ -8,7 +8,7 @@ export default function SyncChip() {
   const [status] = useSyncStatus();
   const [meta] = useSyncMeta();
   const [stored, setClientId] = useGoogleClientId();
-  const clientId = stored || googleClientId();
+  const clientId = googleClientId() || stored;
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 

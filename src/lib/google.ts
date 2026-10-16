@@ -8,8 +8,9 @@ const ENV_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefin
 
 export const useGoogleClientId = () => useStored<string>("google.clientId", "");
 
+// A Client ID built into the site always wins, so a stale ID pasted on one device can't override it.
 export function googleClientId() {
-  return getStored("google.clientId", "") || ENV_CLIENT_ID || getStored<{ clientId?: string }>("gcal.settings", {}).clientId || "";
+  return ENV_CLIENT_ID || getStored("google.clientId", "") || getStored<{ clientId?: string }>("gcal.settings", {}).clientId || "";
 }
 
 export const hasEnvClientId = () => !!ENV_CLIENT_ID;

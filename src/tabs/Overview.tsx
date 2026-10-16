@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Donut, Icon, Panel, PanelTitle, Sparkline } from "../components/ui";
 import { cars } from "../lib/cars";
-import { googleClientId, useGoogleClientId } from "../lib/google";
+import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google";
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
 import { useSchedule } from "../lib/vault";
@@ -239,7 +239,7 @@ function CalendarPanel() {
   const [gcal] = useGcalSettings();
   const [gstatus] = useGcalStatus();
   const [storedClientId, setClientId] = useGoogleClientId();
-  const clientId = storedClientId || googleClientId();
+  const clientId = googleClientId() || storedClientId;
   const today = dateKey();
   const [selected, setSelected] = useState(today);
   const [view, setView] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -349,7 +349,7 @@ function CalendarPanel() {
       </div>
       {showSetup && (
         <div className="gcal-setup">
-          <label>Google OAuth Client ID<input value={clientId} onChange={(event) => setClientId(event.target.value.trim())} placeholder="xxxxxxxx.apps.googleusercontent.com" autoComplete="off"/></label>
+          {!hasEnvClientId() && <label>Google OAuth Client ID<input value={clientId} onChange={(event) => setClientId(event.target.value.trim())} placeholder="xxxxxxxx.apps.googleusercontent.com" autoComplete="off"/></label>}
           <details>
             <summary>How to get a Client ID (one-time, ~5 minutes; the same ID also powers Drive sync)</summary>
             <ol>
