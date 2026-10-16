@@ -12,7 +12,8 @@ export default defineConfig(({ mode }) => {
   const emitSourcemaps = mode === 'development'
 
   return {
-    base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
+    // Figma Make sets FIGMA_PUBLIC_URL; the GitHub Pages workflow sets GITHUB_PAGES_BASE (e.g. /Dashboard-AK/).
+    base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : process.env.GITHUB_PAGES_BASE || '/',
     build: {
       sourcemap: emitSourcemaps ? 'inline' : false,
       minify: !emitSourcemaps,
