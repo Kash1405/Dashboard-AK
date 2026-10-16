@@ -108,20 +108,17 @@ h1, h2, h3, p { margin-top: 0; }
 .main-column, .side-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 
 /* Next race hero */
-.hero-card { height: 280px; padding: 0; position: relative; border: 0; background: #08090a; }
-.hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 58%; filter: saturate(.75) contrast(1.12); opacity: 0; transform: scale(1.04); transition: opacity 1.2s ease, transform 7s linear; }
+.hero-card { height: 320px; padding: 0; position: relative; border: 0; background: #08090a; }
+.hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 58%; filter: saturate(.9) contrast(1.05); opacity: 0; transform: scale(1.04); transition: opacity 1.2s ease, transform 7s linear; }
 .hero-image.active { opacity: 1; transform: scale(1); }
-.hero-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5,6,7,.97) 0%, rgba(5,6,7,.78) 42%, rgba(5,6,7,.15) 82%), linear-gradient(0deg, rgba(0,0,0,.5), transparent 60%); }
+.hero-shade { position: absolute; inset: 0; background: linear-gradient(0deg, rgba(5,6,7,.88) 0%, rgba(5,6,7,.45) 32%, transparent 58%), linear-gradient(90deg, rgba(5,6,7,.35), transparent 45%); }
+.hero-copy, .countdown { text-shadow: 0 2px 10px rgba(0,0,0,.7); }
 .hero-copy { position: absolute; left: 28px; bottom: 26px; right: 290px; }
 .live-pill { display: inline-flex; align-items: center; gap: 7px; color: #d7d8da; font-size: 10px; letter-spacing: .14em; font-weight: 700; margin-bottom: 14px; }
 .live-pill i { width: 6px; height: 6px; background: var(--red); border-radius: 50%; box-shadow: 0 0 0 4px rgba(242,56,43,.15); animation: statusPulse 1.6s infinite; }
 .hero-copy h2 { font: 600 38px/.95 'Play'; margin-bottom: 9px; overflow-wrap: anywhere; }
 .hero-copy > p { margin: 0; color: #b8babd; font-size: 13px; }
 .hero-copy > p span { color: var(--red); padding: 0 5px; }
-.hero-later { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.hero-later li { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: #c9cacd; }
-.hero-later b { color: var(--red); font-size: 9px; letter-spacing: .14em; }
-.hero-later em { font-style: normal; color: #7c7e83; font-size: 11px; }
 .countdown { position: absolute; right: 28px; bottom: 26px; display: flex; align-items: flex-start; gap: 8px; }
 .countdown div { text-align: center; min-width: 46px; }
 .countdown strong { display: block; font: 600 40px/.9 'Play'; font-variant-numeric: tabular-nums; }

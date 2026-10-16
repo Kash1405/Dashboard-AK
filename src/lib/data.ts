@@ -62,4 +62,15 @@ export const quotes = [
   { text: "Straight roads are for fast cars, turns are for fast drivers.", by: "Colin McRae" },
   { text: "The winner ain't the one with the fastest car, it's the one who refuses to lose.", by: "Dale Earnhardt" },
   { text: "Being second is to be the first of the ones who lose.", by: "Ayrton Senna" },
+  { text: "Discipline is doing what you hate to do like you love it.", by: "Mike Tyson" },
+  { text: "Every man I meet is my master in some part, and in that I learn of him.", by: "Ralph Waldo Emerson" },
+  { text: "The only person you are destined to become is the person you decide to be.", by: "Ralph Waldo Emerson" },
+  { text: "It is not what happens to you, but how you react to it that matters.", by: "Epictetus" },
+  { text: "There is good in everything, only if we look for it.", by: "Laura Ingalls Wilder" },
+  { text: "Life has no meaning unless you add meaning to it.", by: "Anonymous" },
+  // The panel wraps every quote in “ ”, so this exchange closes and reopens them in the middle.
+  { text: "Aren't you worried?” — “Will it help?", by: "Bridge of Spies" },
+  { text: "No fear. No distractions. The ability to let that which does not matter truly slide.", by: "Fight Club" },
+  { text: "What doesn't kill you, makes you stranger.", by: "Joker, The Dark Knight" },
+  { text: "We must either wear out, or rust out, every one of us. My choice is to wear out.", by: "Theodore Roosevelt" },
 ];

@@ -101,7 +101,6 @@ function NextUp({ now }: { now: Date }) {
   const [schedule] = useSchedule();
   const block = currentBlock(schedule, now).current;
   const next = upcoming[0];
-  const later = upcoming.slice(1, 3);
   const diff = next ? Math.max(0, next.at.getTime() - now.getTime()) : 0;
   const days = Math.floor(diff / 86400000);
   const units: [number, string][] = days > 0
@@ -121,13 +120,6 @@ function NextUp({ now }: { now: Date }) {
         <p>
           {next ? <>{relativeDay(next.at)} <span>·</span> {next.allDay ? "All day" : timeLabel(next.at)}</> : "Add a calendar event or a timed daily task to see it here."}
         </p>
-        {later.length > 0 && (
-          <ul className="hero-later">
-            {later.map((item) => (
-              <li key={item.key}><b>THEN</b>{item.title}<em>{relativeDay(item.at)}{item.allDay ? "" : ` · ${timeLabel(item.at)}`}</em></li>
-            ))}
-          </ul>
-        )}
       </div>
       {next && (
         <div className="countdown" aria-label="Countdown">
@@ -454,17 +446,25 @@ function NotesPanel() {
 }
 
 function QuotePanel() {
-  const [offset, setOffset] = useState(0);
-  // A new quote every 5 hours (the Overview re-renders every second, so it rolls over on its own).
+  // A random quote every 5 hours (seeded by the 5-hour slot, so it stays put until the slot changes).
+  // "Next quote" jumps to another random one. The Overview re-renders every second, so it rolls over on its own.
   const slot = Math.floor(Date.now() / (5 * 60 * 60 * 1000));
-  const quote = quotes[(slot + offset) % quotes.length];
+  const [picked, setPicked] = useState<{ slot: number; index: number } | null>(null);
+  const seeded = Math.imul(slot ^ 0x9e3779b9, 2654435761) >>> 0;
+  const index = picked?.slot === slot ? picked.index : seeded % quotes.length;
+  const quote = quotes[index];
+  const next = () => {
+    let i = index;
+    while (i === index && quotes.length > 1) i = Math.floor(Math.random() * quotes.length);
+    setPicked({ slot, index: i });
+  };
   return (
     <Panel className="quote-panel">
       <span className="quote-mark">“</span>
       <blockquote>“{quote.text}”</blockquote>
       <div className="quote-foot">
         <p>— {quote.by}</p>
-        <button className="text-button" onClick={() => setOffset(offset + 1)}>Next quote <Icon name="arrow" size={13}/></button>
+        <button className="text-button" onClick={next}>Next quote <Icon name="arrow" size={13}/></button>
       </div>
     </Panel>
   );
