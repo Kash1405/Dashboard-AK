@@ -22,6 +22,8 @@ const icons: Record<string, ReactNode> = {
   pause: <path d="M8 5v14M16 5v14"/>,
   lock: <><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></>,
   flag: <><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></>,
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>,
+  external: <><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></>,
 };
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {

@@ -1,14 +1,14 @@
-import { useEffect, useRef, type ChangeEvent } from "react";
+import { useEffect } from "react";
 import LockScreen from "./components/LockScreen";
 import SyncChip from "./components/SyncChip";
 import { Icon } from "./components/ui";
 import { timerRemaining, useDailyReset, useDailyTasks, useFocusDraft, useFocusFlash, useFocusTimer, useSettings, type Tab } from "./lib/data";
 import { useCompleteSession } from "./lib/focus";
 import { hasToken, syncGoogle, useGcalSettings } from "./lib/gcal";
-import { useDriveSync } from "./lib/sync";
+import { useDriveSync, useSyncMeta } from "./lib/sync";
 import { refreshPortfolio, totals, useHoldings, usePortfolioSettings, useRefreshStatus, useSnapshots } from "./lib/portfolio";
-import { exportAll, importAll, useStored } from "./lib/store";
-import { dateKey, downloadFile, formatDuration, pad, playChime, useNow } from "./lib/utils";
+import { useStored } from "./lib/store";
+import { dateKey, formatDuration, pad, playChime, useNow } from "./lib/utils";
 import Advisor from "./tabs/Advisor";
 import Focus from "./tabs/Focus";
 import Goals from "./tabs/Goals";
@@ -27,23 +27,8 @@ function Header({ active, setActive, onLock }: { active: Tab; setActive: (tab: T
   const now = useNow(1000);
   const [settings] = useSettings();
   const [timer] = useFocusTimer();
-  const fileInput = useRef<HTMLInputElement>(null);
   const remaining = timerRemaining(timer, now.getTime());
   const initials = settings.name.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "AK";
-
-  const onImport = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    try {
-      const payload = JSON.parse(await file.text());
-      if (!window.confirm("Replace the data in this browser with the backup?")) return;
-      importAll(payload);
-      window.alert("Backup restored.");
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Could not read that file.");
-    }
-  };
 
   return (
     <header className="topbar">
@@ -64,9 +49,6 @@ function Header({ active, setActive, onLock }: { active: Tab; setActive: (tab: T
           <button className="timer-chip" onClick={() => setActive("Focus")}><i/>{pad(Math.floor(remaining / 60))}:{pad(remaining % 60)}</button>
         )}
         <SyncChip/>
-        <button className="icon-button" onClick={() => downloadFile(`kash-backup-${dateKey()}.json`, JSON.stringify(exportAll(), null, 2), "application/json")} aria-label="Download a backup" title="Download a backup of all your data"><Icon name="download"/></button>
-        <button className="icon-button" onClick={() => fileInput.current?.click()} aria-label="Restore a backup" title="Restore from a backup file"><Icon name="upload"/></button>
-        <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={onImport}/>
         <button className="icon-button" onClick={onLock} aria-label="Lock the dashboard" title="Lock"><Icon name="lock"/></button>
         <div className="avatar" title={settings.name || "Set your name on the Overview tab"}>{initials}</div>
       </div>
@@ -146,6 +128,8 @@ export default function App() {
   const unlocked = session || authUntil > Date.now();
   useBackgroundJobs();
   useDriveSync(unlocked);
+  const [driveMeta] = useSyncMeta();
+  const driveOn = driveMeta.enabled;
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [active]);
@@ -172,7 +156,7 @@ export default function App() {
       {active === "Goals" && <Goals/>}
       {active === "Investments" && <Investments/>}
       {active === "Advisor" && <Advisor/>}
-      <footer><span>KASH COMMAND · PRIVATE DASHBOARD</span><span>Data stays on this device <i/></span></footer>
+      <footer><span>KASH COMMAND · PRIVATE DASHBOARD</span><span>{driveOn ? "Source of truth: Google Drive › Personal Dashboard" : "Saved in this browser · connect Google Drive to sync"} <i/></span></footer>
     </div>
   );
 }
