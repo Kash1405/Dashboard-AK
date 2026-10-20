@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Donut, Icon, Panel, PanelTitle, Sparkline } from "../components/ui";
-import { cars } from "../lib/cars";
+import { useHeroCars } from "../lib/cars";
 import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google";
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
 import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
-import { quotes, useDailyTasks, useEvents, useGoals, useNotes, useSettings, type Tab } from "../lib/data";
+import { quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
+import { AUTO_REFRESH_MS, DEFAULT_TOPICS, refreshNews, useNewsFeed, useNewsKey, useNewsStatus, useNewsTopics } from "../lib/news";
 import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
 import { addDays, atTime, dateKey, pad, parseDateKey, pct, relativeDay, submitOnEnter, timeLabel, uid, useNow } from "../lib/utils";
 
@@ -22,10 +23,12 @@ export default function Overview({ onNavigate }: { onNavigate: (tab: Tab) => voi
           <RunPlan/>
         </div>
         <aside className="side-column">
+          <LinksPanel/>
           <CalendarPanel/>
           <NotesPanel/>
         </aside>
       </div>
+      <NewsPanel/>
       <PortfolioSummary onNavigate={onNavigate}/>
     </main>
   );
@@ -93,11 +96,13 @@ function useUpcoming(now: Date) {
 
 function NextUp({ now }: { now: Date }) {
   const upcoming = useUpcoming(now);
-  const [image, setImage] = useState(0);
+  const cars = useHeroCars();
+  const [picked, setImage] = useState(0);
+  const image = picked % cars.length;
   useEffect(() => {
     const rotation = window.setInterval(() => setImage((current) => (current + 1) % cars.length), 7000);
     return () => window.clearInterval(rotation);
-  }, []);
+  }, [cars.length]);
   const [schedule] = useSchedule();
   const block = currentBlock(schedule, now).current;
   const next = upcoming[0];
@@ -153,6 +158,7 @@ function RunPlan() {
   const [taskTime, setTaskTime] = useState("");
   const [goalText, setGoalText] = useState("");
   const [goalTag, setGoalTag] = useState("");
+  const [editing, setEditing] = useState<{ id: string; text: string; time: string } | null>(null);
   const doneCount = tasks.filter((task) => task.done).length;
   const sortedTasks = [...tasks].sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
 
@@ -168,6 +174,10 @@ function RunPlan() {
     setGoalText("");
     setGoalTag("");
   };
+  const saveTask = () => {
+    if (editing?.text.trim()) setTasks(tasks.map((task) => (task.id === editing.id ? { ...task, text: editing.text.trim(), time: editing.time } : task)));
+    setEditing(null);
+  };
   const toggleTask = (id: string) => setTasks(tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)));
   const togglePlan = (row: GoalRow) => setPlan(plan.map((r) => (r.id === row.id ? { ...r, status: r.status === "Done" ? (r.end && r.end < today ? "Overdue" : "In Progress") : "Done" } : r)));
   const toggleGoal = (id: string) => setGoals(goals.map((goal) => (goal.id === id ? { ...goal, done: !goal.done, progress: goal.done ? goal.progress : 100 } : goal)));
@@ -180,11 +190,19 @@ function RunPlan() {
           <div className="subhead"><h3>Daily Tasks</h3><span>Schedule items reset every morning</span></div>
           <div className="task-progress"><span style={{ width: `${tasks.length ? (doneCount / tasks.length) * 100 : 0}%` }}/></div>
           <div className="task-list">
-            {sortedTasks.map((task) => (
-              <div className={`task-row ${task.done ? "done" : ""}`} key={task.id}>
+            {sortedTasks.map((task) => editing?.id === task.id ? (
+              <form className="task-edit" key={task.id} onSubmit={(event) => { event.preventDefault(); saveTask(); }} onKeyDown={(event) => { if (event.key === "Escape") setEditing(null); }}>
+                <input autoFocus value={editing.text} onChange={(event) => setEditing({ ...editing, text: event.target.value })} aria-label="Task"/>
+                <input type="time" value={editing.time} onChange={(event) => setEditing({ ...editing, time: event.target.value })} aria-label="Time (optional)" title="Time (optional)"/>
+                <button type="submit" className="text-button strong">Save</button>
+                <button type="button" className="text-button" onClick={() => setEditing(null)}>Cancel</button>
+              </form>
+            ) : (
+              <div className={`task-row with-edit ${task.done ? "done" : ""}`} key={task.id}>
                 <button className="checkbox" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "Uncheck" : "Check"} ${task.text}`}>{task.done && <Icon name="check" size={13}/>}</button>
-                <span className="task-name" onClick={() => toggleTask(task.id)}>{task.text}</span>
+                <span className="task-name" onClick={() => toggleTask(task.id)} onDoubleClick={() => !task.scheduleId && setEditing({ id: task.id, text: task.text, time: task.time })}>{task.text}</span>
                 <time>{task.time || "Anytime"}</time>
+                {task.scheduleId ? <span className="row-delete-spacer"/> : <button className="row-delete" onClick={() => setEditing({ id: task.id, text: task.text, time: task.time })} aria-label={`Edit ${task.text}`} title="Edit task"><Icon name="edit" size={13}/></button>}
                 {task.scheduleId ? <span className="row-delete-spacer"/> : <button className="row-delete" onClick={() => setTasks(tasks.filter((item) => item.id !== task.id))} aria-label={`Close ${task.text}`} title="Close task"><Icon name="x" size={13}/></button>}
               </div>
             ))}
@@ -410,6 +428,134 @@ function CalendarPanel() {
           <button type="submit"><Icon name="plus" size={14}/> Add</button>
         </form>
       </div>
+    </Panel>
+  );
+}
+
+const withScheme = (url: string) => (/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`);
+const hostOf = (url: string) => {
+  try {
+    return new URL(withScheme(url)).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
+function LinksPanel() {
+  const [links, setLinks] = useLinks();
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [editing, setEditing] = useState<QuickLink | null>(null);
+  const [managing, setManaging] = useState(false);
+
+  const addLink = () => {
+    if (!url.trim()) return;
+    setLinks([...links, { id: uid(), name: name.trim() || hostOf(url.trim()), url: withScheme(url.trim()) }]);
+    setName("");
+    setUrl("");
+  };
+  const saveLink = () => {
+    if (editing?.url.trim()) setLinks(links.map((link) => (link.id === editing.id ? { ...editing, name: editing.name.trim() || hostOf(editing.url.trim()), url: withScheme(editing.url.trim()) } : link)));
+    setEditing(null);
+  };
+
+  return (
+    <Panel className="links-panel">
+      <PanelTitle eyebrow="QUICK ACCESS" title="Links" action={<button className="text-button strong" onClick={() => { setManaging(!managing); setEditing(null); }}>{managing ? "Done" : "Edit"}</button>}/>
+      {!managing ? (
+        <div className="link-chips">
+          {links.map((link) => (
+            <a key={link.id} className="link-chip" href={withScheme(link.url)} target="_blank" rel="noreferrer" title={link.url}>
+              <i aria-hidden="true">{(link.name.trim()[0] ?? "•").toUpperCase()}</i>
+              <span>{link.name}</span>
+            </a>
+          ))}
+          {links.length === 0 && <p className="empty">No links yet. Press <b>Edit</b> to add the sites you open every day.</p>}
+        </div>
+      ) : (
+        <>
+          <div className="link-list">
+            {links.map((link) => editing?.id === link.id ? (
+              <form className="link-edit" key={link.id} onSubmit={(event) => { event.preventDefault(); saveLink(); }} onKeyDown={(event) => { if (event.key === "Escape") setEditing(null); }}>
+                <input autoFocus value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} placeholder="Display name" aria-label="Display name"/>
+                <input value={editing.url} onChange={(event) => setEditing({ ...editing, url: event.target.value })} placeholder="https://…" aria-label="URL"/>
+                <span><button type="submit" className="text-button strong">Save</button><button type="button" className="text-button" onClick={() => setEditing(null)}>Cancel</button></span>
+              </form>
+            ) : (
+              <div className="link-row" key={link.id}>
+                <div><strong>{link.name}</strong><small>{link.url}</small></div>
+                <button className="icon-mini" onClick={() => setEditing(link)} aria-label={`Edit ${link.name}`}><Icon name="edit" size={13}/></button>
+                <button className="icon-mini" onClick={() => setLinks(links.filter((item) => item.id !== link.id))} aria-label={`Remove ${link.name}`}><Icon name="trash" size={13}/></button>
+              </div>
+            ))}
+          </div>
+          <form className="link-add" onKeyDown={submitOnEnter} onSubmit={(event) => { event.preventDefault(); addLink(); }}>
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Display name" aria-label="New link display name"/>
+            <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Address, e.g. mail.google.com" aria-label="New link address"/>
+            <button type="submit" className="secondary-button" disabled={!url.trim()}><Icon name="plus" size={14}/> Add link</button>
+          </form>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function NewsPanel() {
+  const [feed] = useNewsFeed();
+  const [status] = useNewsStatus();
+  const [apiKey, setApiKey] = useNewsKey();
+  const [topics, setTopics] = useNewsTopics();
+  const [setup, setSetup] = useState(false);
+  const [topic, setTopic] = useState("All");
+  const topicList = ["All", ...Array.from(new Set(feed.items.map((item) => item.topic).filter(Boolean)))];
+  const shown = feed.items.filter((item) => topic === "All" || item.topic === topic);
+
+  // Refresh on its own when the cached feed is older than a few hours.
+  useEffect(() => {
+    if (apiKey.trim() && Date.now() - feed.fetchedAt > AUTO_REFRESH_MS) refreshNews();
+  }, [apiKey, feed.fetchedAt]);
+
+  return (
+    <Panel className="news-panel">
+      <PanelTitle
+        eyebrow={feed.fetchedAt ? `UPDATED ${relativeDay(new Date(feed.fetchedAt)).toUpperCase()} · ${timeLabel(new Date(feed.fetchedAt))}` : "AI HIGHLIGHTS"}
+        title="Latest News"
+        action={
+          <div className="news-actions">
+            <button className="text-button" onClick={() => setSetup(!setup)}>Settings</button>
+            <button className="primary-button" onClick={() => refreshNews()} disabled={status.busy || !apiKey.trim()}><Icon name="refresh" size={14}/> {status.busy ? "Refreshing…" : "Refresh"}</button>
+          </div>
+        }
+      />
+      {(setup || !apiKey.trim()) && (
+        <div className="gcal-setup">
+          <label>Topics<input value={topics} onChange={(event) => setTopics(event.target.value)} placeholder={DEFAULT_TOPICS}/></label>
+          <label>Anthropic API key<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value.trim())} placeholder="sk-ant-…" autoComplete="off"/></label>
+          <details>
+            <summary>How this works</summary>
+            <p>Claude searches the web for the latest stories on your topics and writes a short highlight for each, with a link to the original article. It refreshes on its own every 6 hours while the dashboard is open, or whenever you press Refresh. Each refresh is a paid API call (a few cents).</p>
+            <p>Create a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a> and set a monthly spend limit there. The key is kept only in this browser; it is not synced to Drive or included in backups, so add it on each device.</p>
+          </details>
+        </div>
+      )}
+      {status.error && <p className="gcal-error">{status.error}</p>}
+      {topicList.length > 2 && (
+        <div className="news-topics">
+          {topicList.map((name) => <button key={name} className={name === topic ? "active" : ""} onClick={() => setTopic(name)}>{name}</button>)}
+        </div>
+      )}
+      <div className={`news-grid ${status.busy ? "busy" : ""}`}>
+        {shown.map((item) => (
+          <article className="news-card" key={item.url}>
+            <small>{item.topic}{item.published ? ` · ${shortDate(item.published)}` : ""}</small>
+            <h3><a href={item.url} target="_blank" rel="noreferrer">{item.headline}</a></h3>
+            <p>{item.highlight}</p>
+            <a className="news-source" href={item.url} target="_blank" rel="noreferrer">{item.source || hostOf(item.url)} <Icon name="external" size={12}/></a>
+          </article>
+        ))}
+      </div>
+      {feed.items.length === 0 && !status.busy && apiKey.trim() && <p className="empty">No news loaded yet. Press Refresh.</p>}
+      {feed.items.length === 0 && status.busy && <p className="empty">Searching the web and writing highlights… this takes about a minute.</p>}
     </Panel>
   );
 }

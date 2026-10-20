@@ -1,4 +1,4 @@
-import type { CalEvent, DailyTask, FocusLog, Goal, Note, Settings } from "./data";
+import type { CalEvent, DailyTask, FocusLog, Goal, Note, QuickLink, Settings } from "./data";
 import type { Holding, PortfolioSettings, PricePoint, Snapshot } from "./portfolio";
 import { peekStored, setStored } from "./store";
 import { pad, uid } from "./utils";
@@ -129,6 +129,11 @@ const eventsTable = listTable<CalEvent>("data", "Calendar Events", "events", [
   ["Date", (e) => e.date, (s) => ({ date: date(s) })],
   ["Time", (e) => e.time, (s) => ({ time: time(s) })],
   ["Title", (e) => e.title, (s) => ({ title: s })],
+]);
+
+const linksTable = listTable<QuickLink>("data", "Links", "links", [
+  ["Name", (l) => l.name, (s) => ({ name: s.trim() })],
+  ["URL", (l) => l.url, (s) => ({ url: s.trim() })],
 ]);
 
 const holdingsTable: Table = {
@@ -299,7 +304,7 @@ const pricesTable: Table = {
 
 // Order matters when applying: Holdings before Price History.
 export const TABLES: Table[] = [
-  settingsTable, tasksTable, goalsTable, goalPlanTable, eventsTable, holdingsTable, medsTable, scheduleTable, mealsTable, trackerTable,
+  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, eventsTable, holdingsTable, medsTable, scheduleTable, mealsTable, trackerTable,
   focusTable, wellnessTable, medLogTable, habitLogTable, mealLogTable, snapshotsTable, pricesTable,
 ];
 

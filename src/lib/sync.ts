@@ -11,7 +11,11 @@ import { TABLES, applyNotes, cellText, noteRows, notesHtml, parseNotes, type Cel
 //   About this folder (Google Doc) – how it works
 // Each tab is synced on its own with a three-way check against what this device last wrote:
 // edited in Drive → Drive wins; changed only here → uploaded. Local changes upload a couple of
-// seconds after they happen, and "Sync now" always re-reads Drive so edits made there load in.
+// seconds after they happen, and Drive is checked every 30 seconds (and whenever the tab comes
+// back into view), so other devices' edits load in without pressing anything.
+// Google only hands a static site one-hour tokens, and a new one needs a popup, which browsers
+// allow only during a click. So the token is kept for its full hour (across reloads), and when
+// it is missing or about to run out, the next click anywhere on the page quietly renews it.
 
 const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata";
 const FILES_API = "https://www.googleapis.com/drive/v3/files";
@@ -22,7 +26,8 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 const SHEET_MIME = "application/vnd.google-apps.spreadsheet";
 const DOC_MIME = "application/vnd.google-apps.document";
 const DEBOUNCE_MS = 2000;
-const POLL_MS = 2 * 60 * 1000;
+const POLL_MS = 30 * 1000;
+const RENEW_BEFORE_MS = 10 * 60 * 1000; // ask for a new token on a click once less than this is left
 
 type Role = FileRole | "notes" | "readme";
 const FILE_NAMES: Record<Role, string> = { data: "Dashboard Data", logs: "Dashboard Logs", notes: "Notes", readme: "About this folder" };
@@ -49,7 +54,10 @@ const setStatus = (patch: Partial<SyncStatus>) => setStored<SyncStatus>("~sync.s
 
 const SYNCED_KEYS = new Set([...TABLES.flatMap((t) => t.keys), "notes", "advisor.meds", "advisor.meals", "advisor.tracker"]);
 
-let token: Token | null = null;
+let token: Token | null = (() => {
+  const saved = peekStored<Token>("sync.token");
+  return isFresh(saved ?? null) ? saved! : null;
+})();
 let applying = false;
 let timer: number | undefined;
 let busy: Promise<void> | null = null;
@@ -88,8 +96,8 @@ async function api(url: string, init: RequestInit = {}, gen = generation) {
   if (gen !== generation) throw new Error("Signed out.");
   const response = await fetch(url, { ...init, headers: { Authorization: `Bearer ${token!.value}`, ...(init.headers ?? {}) } });
   if (response.status === 401) {
-    token = null;
-    throw new Error("Google session expired. Click “Sign in”.");
+    setToken(null);
+    throw new Error("Google session expired. Click anywhere on the page to reconnect.");
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -171,9 +179,16 @@ async function readTabs(id: string, role: FileRole): Promise<Record<string, stri
   return out;
 }
 
-async function writeTabs(id: string, items: { table: Table; rows: Cell[][] }[]) {
+async function writeTabs(id: string, role: FileRole, items: { table: Table; rows: Cell[][] }[]) {
   if (!items.length) return;
-  await api(`${SHEETS_API}/${id}/values:batchClear`, post({ ranges: items.map(({ table }) => range(table)) }));
+  const clear = () => api(`${SHEETS_API}/${id}/values:batchClear`, post({ ranges: items.map(({ table }) => range(table)) }));
+  try {
+    await clear();
+  } catch (error) {
+    if ((error as { status?: number }).status !== 400) throw error;
+    await ensureTabs(id, role); // a tab was missing (new in this version, or deleted in Sheets)
+    await clear();
+  }
   await api(`${SHEETS_API}/${id}/values:batchUpdate`, post({ valueInputOption: "RAW", data: items.map(({ table, rows }) => ({ range: `${range(table)}!A1`, values: [table.headers, ...rows] })) }));
 }
 
@@ -181,14 +196,14 @@ const readme = () => `<html><body><h1>Personal Dashboard</h1>
 <p>This folder is the source of truth for your KASH dashboard. The dashboard reads from it and writes back to it.</p>
 <h2>What is here</h2>
 <ul>
-<li><b>Dashboard Data</b> (Sheet): your inputs. One tab each for settings, daily tasks, goals, goal plan, calendar events, holdings, medications, daily schedule, meal plan and habit tracker.</li>
+<li><b>Dashboard Data</b> (Sheet): your inputs. One tab each for settings, links, daily tasks, goals, goal plan, calendar events, holdings, medications, daily schedule, meal plan and habit tracker.</li>
 <li><b>Dashboard Logs</b> (Sheet): your history. Focus sessions, wellness check-ins, medication, habit and meal logs, portfolio value and price history.</li>
 <li><b>Notes</b> (Doc): your notes. Each starts with a line like “— 2026-10-18 09:30 —”.</li>
 </ul>
 <h2>How syncing works</h2>
 <ul>
 <li>Changes in the dashboard are saved here a couple of seconds after you make them.</li>
-<li>You can edit the Sheets and the Notes doc directly. Press <b>Sync now</b> in the dashboard (or switch back to its tab) to load your edits.</li>
+<li>You can edit the Sheets and the Notes doc directly. The dashboard checks for edits every 30 seconds and whenever you switch back to it.</li>
 <li>If the same tab was changed in both places, the version here wins.</li>
 <li>Keep the header row and the ID columns. Leave the ID empty on a new row and the dashboard will fill it in.</li>
 <li>Dates are YYYY-MM-DD and times are HH:MM.</li>
@@ -250,10 +265,37 @@ function exclusive(task: () => Promise<void>) {
   return run;
 }
 
-async function ensureToken(interactive: boolean) {
-  if (isFresh(token)) return;
-  token = await requestToken(SCOPE, interactive && !meta().enabled ? "consent" : "");
+function setToken(next: Token | null) {
+  token = next;
+  setStored<Token | null>("sync.token", next);
 }
+
+async function ensureToken(interactive: boolean) {
+  if (isFresh(token) && !(interactive && token!.expiresAt - Date.now() < RENEW_BEFORE_MS)) return;
+  if (!interactive) throw new Error("Click anywhere on the page to reconnect Google Drive.");
+  setToken(await requestToken(SCOPE, meta().enabled ? "" : "consent"));
+}
+
+// Google's token popup is only allowed during a click, so the first click or key press after the
+// token runs low renews it (the popup closes on its own when access was already granted).
+let armed = false;
+let declinedAt = 0; // popup closed or failed during a click: wait a few minutes before asking again
+function onGesture() {
+  disarm();
+  if (meta().enabled) syncNow(true);
+}
+function arm() {
+  if (armed || !meta().enabled || !googleClientId() || Date.now() - declinedAt < 5 * 60 * 1000) return;
+  armed = true;
+  window.addEventListener("click", onGesture, true);
+  window.addEventListener("keydown", onGesture, true);
+}
+function disarm() {
+  armed = false;
+  window.removeEventListener("click", onGesture, true);
+  window.removeEventListener("keydown", onGesture, true);
+}
+const needsRenewal = () => !token || token.expiresAt - Date.now() < RENEW_BEFORE_MS;
 
 function applyQuietly(apply: () => void) {
   applying = true;
@@ -310,7 +352,7 @@ async function runSync(full: boolean) {
         hashes[table.sheet] = localHash;
       }
     }
-    if (uploads.length) await writeTabs(file.id, uploads);
+    if (uploads.length) await writeTabs(file.id, role, uploads);
     if (gen !== generation) return;
     versions[role] = (await json<DriveFile>(`${FILES_API}/${file.id}?fields=version`)).version;
   }
@@ -341,15 +383,23 @@ async function runSync(full: boolean) {
 function fail(error: unknown) {
   const message = error instanceof Error ? error.message : "Sync failed.";
   if (message === "Signed out.") return;
-  if (!isFresh(token)) setStatus({ state: "signed-out", error: message });
-  else setStatus({ state: "error", error: message });
+  if (!isFresh(token)) {
+    setStatus({ state: "signed-out", error: message });
+    arm();
+  } else setStatus({ state: "error", error: message });
 }
 
 export function syncNow(interactive = false, full = true) {
   return exclusive(async () => {
     try {
-      await ensureToken(interactive);
+      try {
+        await ensureToken(interactive);
+      } catch (error) {
+        if (interactive) declinedAt = Date.now();
+        throw error;
+      }
       await runSync(full);
+      if (needsRenewal()) arm();
     } catch (error) {
       fail(error);
     }
@@ -364,8 +414,9 @@ export function signIn() {
 
 export function signOut() {
   generation++;
+  disarm();
   if (token) revokeToken(token.value);
-  token = null;
+  setToken(null);
   window.clearTimeout(timer);
   timer = undefined;
   setMeta({ enabled: false, versions: {}, hashes: {} });
@@ -379,7 +430,8 @@ function schedulePush() {
     timer = undefined;
     if (!meta().enabled) return;
     if (!isFresh(token)) {
-      setStatus({ state: "signed-out", error: "Changes are saved in this browser and will upload when you sign in." });
+      setStatus({ state: "signed-out", error: "Saved in this browser. Click anywhere on the page and it uploads to Drive." });
+      arm();
       return;
     }
     syncNow(false, false);
@@ -387,7 +439,7 @@ function schedulePush() {
 }
 
 // Mount once (in App, after unlock): uploads local changes, and picks up Drive edits
-// when the app is opened, when its tab comes back into view, and every couple of minutes.
+// when the app is opened, when its tab comes back into view, and every 30 seconds.
 export function useDriveSync(active: boolean) {
   useEffect(() => {
     if (!active) return;
@@ -396,27 +448,37 @@ export function useDriveSync(active: boolean) {
       schedulePush();
     });
     const check = () => {
-      if (document.visibilityState === "visible" && meta().enabled && isFresh(token) && !busy) syncNow(false, false);
+      if (document.visibilityState !== "visible" || !meta().enabled) return;
+      if (needsRenewal()) arm();
+      if (isFresh(token) && !busy) syncNow(false, false);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden" && timer !== undefined && isFresh(token)) syncNow(false, false); // flush before leaving
       else check();
     };
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", check);
+    window.addEventListener("online", check);
     const poll = window.setInterval(check, POLL_MS);
 
     if (googleClientId()) {
       setStatus({ state: meta().enabled ? "signed-out" : "off" });
-      preloadGoogle()
-        .then(() => {
-          // Try a silent sign-in; browsers may block it, in which case the chip offers "Sign in".
-          if (meta().enabled) syncNow(false, true);
-        })
-        .catch(() => undefined);
+      preloadGoogle().catch(() => undefined);
+      if (meta().enabled) {
+        // A token from earlier this hour is reused as-is; otherwise the first click renews it.
+        if (isFresh(token)) syncNow(false, true);
+        else {
+          setStatus({ state: "signed-out", error: "Click anywhere on the page to load your latest data from Drive." });
+          arm();
+        }
+      }
     }
     return () => {
       unsubscribe();
+      disarm();
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", check);
+      window.removeEventListener("online", check);
       window.clearInterval(poll);
     };
   }, [active]);

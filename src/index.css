@@ -808,3 +808,52 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .sync-backup span { color: var(--muted); font-size: 12.5px; margin-right: auto; }
 .sync-chip-btn.pending i { background: var(--amber); }
 .sync-copy b { color: #e6e7e9; }
+
+/* ---------- Daily task editing ---------- */
+.task-row.with-edit { grid-template-columns: 28px 1fr auto 28px 28px; }
+.task-row.with-edit .row-delete-spacer { width: 28px; }
+.task-edit { display: grid; grid-template-columns: 1fr 104px auto auto; align-items: center; gap: 8px; min-height: 46px; border-bottom: 1px solid #222429; padding: 6px 0; }
+.task-edit input { min-width: 0; height: 34px; border: 1px solid #3a3c42; background: var(--field); color: #e2e3e5; padding: 0 10px; font-size: 14px; }
+.task-edit input[type="time"] { padding: 0 6px; }
+
+/* ---------- Links ---------- */
+.link-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.link-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 7px 12px 7px 7px; border: 1px solid #2c2e33; background: #18191d; color: #d6d7d9; font-size: 13.5px; text-decoration: none; transition: border-color .15s, color .15s; }
+.link-chip:hover { border-color: var(--red); color: white; }
+.link-chip i { width: 22px; height: 22px; flex: none; display: grid; place-items: center; background: #26272c; color: var(--red); font: 700 12px 'Play'; font-style: normal; }
+.link-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-list { display: flex; flex-direction: column; }
+.link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; padding: 8px 0; border-bottom: 1px solid #222429; }
+.link-row strong { display: block; color: #d6d7d9; font-size: 14px; font-weight: 500; }
+.link-row small { display: block; color: #74767c; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-edit, .link-add { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; }
+.link-add { border-top: 0; margin-top: 6px; }
+.link-edit input, .link-add input { min-width: 0; height: 34px; border: 1px solid #2c2e33; background: var(--field); color: #e2e3e5; padding: 0 10px; font-size: 14px; }
+.link-edit span { display: flex; justify-content: flex-end; gap: 12px; }
+.link-add .secondary-button { align-self: flex-start; }
+
+/* ---------- Latest news ---------- */
+.news-actions { display: flex; align-items: center; gap: 14px; }
+.news-topics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.news-topics button { border: 1px solid #2c2e33; background: transparent; color: #a0a2a7; padding: 5px 11px; font-size: 12.5px; cursor: pointer; }
+.news-topics button.active { border-color: var(--red); color: white; background: rgba(242,56,43,.12); }
+.news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; transition: opacity .2s; }
+.news-grid.busy { opacity: .45; }
+.news-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid #24262b; background: #111215; }
+.news-card small { color: var(--red); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+.news-card h3 { margin: 0; font-size: 15.5px; line-height: 1.35; font-weight: 600; }
+.news-card h3 a { color: #eceded; text-decoration: none; }
+.news-card h3 a:hover { color: var(--red); }
+.news-card p { margin: 0; color: #a7a9ae; font-size: 13.5px; line-height: 1.55; flex: 1; }
+.news-source { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; color: #8c8e94; font-size: 12.5px; text-decoration: none; }
+.news-source:hover { color: white; }
+.news-panel .gcal-setup p { margin: 8px 0 0; }
+
+@media (max-width: 950px) {
+  .side-column > .links-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .task-edit { grid-template-columns: 1fr 96px; }
+  .news-actions { gap: 8px; }
+  .news-grid { grid-template-columns: 1fr; }
+}
