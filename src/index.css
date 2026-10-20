@@ -151,6 +151,10 @@ h1, h2, h3, p { margin-top: 0; }
 .goal-row { display: grid; grid-template-columns: 28px 1fr 28px; gap: 6px; align-items: start; padding: 12px 0; border-bottom: 1px solid #222429; }
 .goal-row > .checkbox { margin-top: 1px; }
 .goal-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.overdue-label { display: inline-block; margin-left: 8px; padding: 2px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #fff; background: var(--red); vertical-align: 2px; }
+.goal-dates { margin: 6px 0 0; color: #808288; font-size: 12.5px; }
+.row-delete-spacer { width: 24px; }
+.page > .quote-panel { margin-bottom: 18px; }
 .goal-top em { color: #808288; font-size: 12.5px; font-style: normal; white-space: nowrap; padding: 2px 6px; background: #1d1e22; }
 .goal-progress { display: grid; grid-template-columns: 1fr 40px; gap: 10px; align-items: center; margin-top: 10px; }
 .goal-progress b { color: #bfc1c5; font: 600 14px 'Play'; text-align: right; }
@@ -496,7 +500,6 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
   .overview-grid, .investment-grid, .wellness-grid, .connect-panel { grid-template-columns: 1fr; }
   .focus-grid { grid-template-columns: 1fr 1fr; }
   .side-column { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
-  .quote-panel { grid-column: 1/-1; }
   .market-strip { grid-template-columns: 1fr 1fr; }
   .market-strip > div:nth-child(2) { border-right: 0; }
   .market-strip > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -622,7 +625,7 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .checkbox.checked { background: var(--green); border-color: var(--green); }
 
 /* ---------- Goals tab ---------- */
-.goal-stats { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+.goal-stats { display: grid; grid-template-columns: 1.4fr repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
 .goal-stats > div, .goal-stat { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 16px 18px; text-align: left; }
 .goal-stats span { display: block; color: #6d6f75; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px; }
 .goal-stats strong { font: 600 32px/1 'Play'; }
@@ -635,6 +638,7 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .tone-in-progress { color: var(--amber); }
 .tone-done { color: var(--green); }
 .tone-on-hold { color: #5b8def; }
+.tone-overdue { color: var(--red); }
 .search-input { height: 34px; width: 200px; border: 1px solid #2c2e33; background: var(--field); color: #d6d7d9; padding: 0 11px; font-size: 14px; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px; }
 .filter-chips button { border: 1px solid #2f3136; background: #18191d; color: #acaeb3; padding: 6px 11px; font-size: 13px; cursor: pointer; }
@@ -644,6 +648,7 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .status-pill.in-progress { background: rgba(245,165,36,.12); color: var(--amber); }
 .status-pill.done { background: rgba(69,211,159,.12); color: var(--green); }
 .status-pill.on-hold { background: rgba(91,141,239,.12); color: #5b8def; }
+.status-pill.overdue { background: rgba(242,56,43,.14); color: var(--red); }
 
 /* ---------- Advisor extras ---------- */
 .section-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: -12px 0 18px; }

@@ -104,6 +104,7 @@ const tasksTable = listTable<DailyTask>("data", "Daily Tasks", "daily.tasks", [
   ["Task", (t) => t.text, (s) => ({ text: s })],
   ["Time", (t) => t.time, (s) => ({ time: time(s) })],
   ["Done", (t) => t.done, (s) => ({ done: yes(s) })],
+  ["Schedule ID", (t) => t.scheduleId ?? "", (s) => ({ scheduleId: s.trim() || undefined })],
 ]);
 
 const goalsTable = listTable<Goal>("data", "Goals", "goals", [
@@ -113,12 +114,14 @@ const goalsTable = listTable<Goal>("data", "Goals", "goals", [
   ["Done", (g) => g.done, (s) => ({ done: yes(s) })],
 ]);
 
-const statuses: GoalStatus[] = ["Not Started", "In Progress", "Done", "On Hold"];
+const statuses: GoalStatus[] = ["Not Started", "In Progress", "Done", "On Hold", "Overdue"];
 const goalPlanTable = listTable<GoalRow>("data", "Goal Plan", "goals.table", [
   ["Type", (g) => g.type, (s) => ({ type: s })],
   ["Skill", (g) => g.skill, (s) => ({ skill: s })],
   ["Description", (g) => g.description, (s) => ({ description: s })],
   ["Comments", (g) => g.comments, (s) => ({ comments: s })],
+  ["Start Date", (g) => g.start ?? "", (s) => ({ start: s.trim() ? date(s) : "" })],
+  ["End Date", (g) => g.end ?? "", (s) => ({ end: s.trim() ? date(s) : "" })],
   ["Status", (g) => g.status, (s) => ({ status: statuses.find((x) => x.toLowerCase() === s.trim().toLowerCase()) ?? "Not Started" })],
 ]);
 

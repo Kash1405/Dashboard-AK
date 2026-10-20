@@ -1,8 +1,8 @@
 import { hasStored, setStored, useStored } from "./store";
 import { VAULT } from "./vault.data";
 
-export type GoalStatus = "Not Started" | "In Progress" | "Done" | "On Hold";
-export type GoalRow = { id: string; type: string; skill: string; description: string; comments: string; status: GoalStatus };
+export type GoalStatus = "Not Started" | "In Progress" | "Done" | "On Hold" | "Overdue";
+export type GoalRow = { id: string; type: string; skill: string; description: string; comments: string; status: GoalStatus; start?: string; end?: string };
 export type ScheduleRow = { id: string; start: string; end: string; activity: string; description: string };
 export type MealRow = { id: string; meal: string; details: string };
 export type MedRow = { id: string; name: string; dose: string; role: string; sideEffects: string; time: string };
@@ -53,3 +53,10 @@ export function seedFromVault(data: VaultData) {
   ];
   for (const [key, value] of seeds) if (!hasStored(key)) setStored(key, value);
 }
+
+// Past its end date and not finished.
+export const isOverdue = (row: GoalRow, today: string) => row.status === "Overdue" || (!!row.end && row.end < today && row.status !== "Done");
+
+// Shown on the Overview while today is inside its start/end window, or while it is overdue.
+export const inFocus = (row: GoalRow, today: string) =>
+  isOverdue(row, today) || (!!(row.start || row.end) && (!row.start || row.start <= today) && (!row.end || today <= row.end));
