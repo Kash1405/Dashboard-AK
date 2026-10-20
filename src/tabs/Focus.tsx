@@ -1,7 +1,7 @@
 import { useState } from "react";
 import ScheduleTable from "../components/ScheduleTable";
 import { Icon, Panel, PanelTitle } from "../components/ui";
-import { timerRemaining, useDailyTasks, useFocusDraft, useFocusFlash, useFocusLogs, useFocusTimer } from "../lib/data";
+import { isClosedToday, timerRemaining, useDailyTasks, useFocusDraft, useFocusFlash, useFocusLogs, useFocusTimer } from "../lib/data";
 import { useCompleteSession } from "../lib/focus";
 import { dateKey, formatDuration, pad, relativeDay, timeLabel, useNow } from "../lib/utils";
 
@@ -12,7 +12,8 @@ export default function Focus() {
   const [timer, setTimer] = useFocusTimer();
   const [draft, setDraft] = useFocusDraft();
   const [logs, setLogs] = useFocusLogs();
-  const [tasks] = useDailyTasks();
+  const [allTasks] = useDailyTasks();
+  const tasks = allTasks.filter((task) => !isClosedToday(task));
   const [flash, setFlash] = useFocusFlash();
   const [custom, setCustom] = useState("");
   const complete = useCompleteSession();
