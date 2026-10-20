@@ -90,10 +90,10 @@ function useBackgroundJobs() {
     document.title = timer.endsAt !== null ? `▶ ${pad(Math.floor(remaining / 60))}:${pad(remaining % 60)} · Focus` : "KASH · Personal Command";
   }, [timer.endsAt, remaining]);
 
-  // New day: untick only the tasks fetched from the Daily Schedule. Tasks added by hand stay as they are until closed.
+  // New day: untick (and bring back any closed) tasks fetched from the Daily Schedule. Tasks added by hand stay as they are until closed.
   useEffect(() => {
     if (lastReset !== today) {
-      setTasks((list) => list.map((task) => (task.scheduleId ? { ...task, done: false } : task)));
+      setTasks((list) => list.map((task) => (task.scheduleId ? { ...task, done: false, closedOn: undefined } : task)));
       setLastReset(today);
     }
   }, [today, lastReset, setTasks, setLastReset]);

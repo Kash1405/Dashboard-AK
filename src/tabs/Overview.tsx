@@ -1,12 +1,12 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Donut, Icon, Panel, PanelTitle, Sparkline } from "../components/ui";
 import { useHeroCars } from "../lib/cars";
 import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google";
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
 import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
-import { quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
-import { AUTO_REFRESH_MS, DEFAULT_TOPICS, refreshNews, useNewsFeed, useNewsKey, useNewsStatus, useNewsTopics } from "../lib/news";
+import { isClosedToday, quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
+import { RECHECK_MS, refreshNews, useNewsFeed, useNewsStatus } from "../lib/news";
 import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
 import { addDays, atTime, dateKey, pad, parseDateKey, pct, relativeDay, submitOnEnter, timeLabel, uid, useNow } from "../lib/utils";
 
@@ -70,7 +70,8 @@ function useUpcoming(now: Date) {
   const [localEvents] = useEvents();
   const [googleEvents] = useGcalEvents();
   const [gcal] = useGcalSettings();
-  const [tasks] = useDailyTasks();
+  const [allTasks] = useDailyTasks();
+  const tasks = useMemo(() => allTasks.filter((task) => !isClosedToday(task)), [allTasks]);
   const events = useMemo(() => [...localEvents, ...(gcal.enabled ? googleEvents : [])], [localEvents, googleEvents, gcal.enabled]);
   const minute = Math.floor(now.getTime() / 60000);
   return useMemo(() => {
@@ -149,7 +150,8 @@ function NextUp({ now }: { now: Date }) {
 }
 
 function RunPlan() {
-  const [tasks, setTasks] = useDailyTasks();
+  const [allTasks, setTasks] = useDailyTasks();
+  const tasks = allTasks.filter((task) => !isClosedToday(task));
   const [goals, setGoals] = useGoals();
   const [plan, setPlan] = useGoalTable();
   const today = dateKey();
@@ -164,7 +166,7 @@ function RunPlan() {
 
   const addTask = () => {
     if (!taskText.trim()) return;
-    setTasks([...tasks, { id: uid(), text: taskText.trim(), time: taskTime, done: false }]);
+    setTasks([...allTasks, { id: uid(), text: taskText.trim(), time: taskTime, done: false }]);
     setTaskText("");
     setTaskTime("");
   };
@@ -175,10 +177,12 @@ function RunPlan() {
     setGoalTag("");
   };
   const saveTask = () => {
-    if (editing?.text.trim()) setTasks(tasks.map((task) => (task.id === editing.id ? { ...task, text: editing.text.trim(), time: editing.time } : task)));
+    if (editing?.text.trim()) setTasks(allTasks.map((task) => (task.id === editing.id ? { ...task, text: editing.text.trim(), time: editing.time } : task)));
     setEditing(null);
   };
-  const toggleTask = (id: string) => setTasks(tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)));
+  // Schedule tasks are hidden for today (they return tomorrow); tasks added by hand are removed.
+  const closeTask = (id: string) => setTasks(allTasks.flatMap((task) => (task.id !== id ? [task] : task.scheduleId ? [{ ...task, closedOn: dateKey() }] : [])));
+  const toggleTask = (id: string) => setTasks(allTasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)));
   const togglePlan = (row: GoalRow) => setPlan(plan.map((r) => (r.id === row.id ? { ...r, status: r.status === "Done" ? (r.end && r.end < today ? "Overdue" : "In Progress") : "Done" } : r)));
   const toggleGoal = (id: string) => setGoals(goals.map((goal) => (goal.id === id ? { ...goal, done: !goal.done, progress: goal.done ? goal.progress : 100 } : goal)));
 
@@ -203,7 +207,7 @@ function RunPlan() {
                 <span className="task-name" onClick={() => toggleTask(task.id)} onDoubleClick={() => !task.scheduleId && setEditing({ id: task.id, text: task.text, time: task.time })}>{task.text}</span>
                 <time>{task.time || "Anytime"}</time>
                 {task.scheduleId ? <span className="row-delete-spacer"/> : <button className="row-delete" onClick={() => setEditing({ id: task.id, text: task.text, time: task.time })} aria-label={`Edit ${task.text}`} title="Edit task"><Icon name="edit" size={13}/></button>}
-                {task.scheduleId ? <span className="row-delete-spacer"/> : <button className="row-delete" onClick={() => setTasks(tasks.filter((item) => item.id !== task.id))} aria-label={`Close ${task.text}`} title="Close task"><Icon name="x" size={13}/></button>}
+                <button className="row-delete" onClick={() => closeTask(task.id)} aria-label={`Close ${task.text}`} title={task.scheduleId ? "Close for today (back tomorrow)" : "Close task"}><Icon name="x" size={13}/></button>
               </div>
             ))}
             {tasks.length === 0 && <p className="empty">No daily tasks yet. Fill in your Daily Schedule or add a task below.</p>}
@@ -500,62 +504,99 @@ function LinksPanel() {
   );
 }
 
+const sinceLabel = (iso: string) => {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!iso || Number.isNaN(mins)) return "";
+  if (mins < 60) return `${Math.max(1, mins)}m ago`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`;
+  return `${Math.round(mins / 1440)}d ago`;
+};
+
 function NewsPanel() {
   const [feed] = useNewsFeed();
   const [status] = useNewsStatus();
-  const [apiKey, setApiKey] = useNewsKey();
-  const [topics, setTopics] = useNewsTopics();
-  const [setup, setSetup] = useState(false);
   const [topic, setTopic] = useState("All");
-  const topicList = ["All", ...Array.from(new Set(feed.items.map((item) => item.topic).filter(Boolean)))];
-  const shown = feed.items.filter((item) => topic === "All" || item.topic === topic);
+  const [paused, setPaused] = useState(false);
+  const [view, setView] = useState({ first: 0, last: 0 });
+  const track = useRef<HTMLDivElement>(null);
+  const items = feed.items ?? [];
+  const topics = ["All", ...Array.from(new Set(items.map((item) => item.topic).filter(Boolean)))];
+  const shown = items.filter((item) => topic === "All" || item.topic === topic);
 
-  // Refresh on its own when the cached feed is older than a few hours.
+  // Load on open and look for a newer file every half hour (the site rebuilds it every 2 hours).
   useEffect(() => {
-    if (apiKey.trim() && Date.now() - feed.fetchedAt > AUTO_REFRESH_MS) refreshNews();
-  }, [apiKey, feed.fetchedAt]);
+    refreshNews();
+    const timer = window.setInterval(refreshNews, RECHECK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Which cards are in view, for the "3–6 of 20" counter.
+  const measure = () => {
+    const el = track.current;
+    if (!el || !el.children.length) return;
+    const card = (el.children[0] as HTMLElement).offsetWidth + 14;
+    const first = Math.round(el.scrollLeft / card);
+    setView({ first, last: Math.min(shown.length, first + Math.max(1, Math.floor((el.clientWidth + 14) / card))) });
+  };
+  useEffect(() => {
+    track.current?.scrollTo({ left: 0 });
+    measure();
+  }, [topic, shown.length]);
+
+  const step = (direction: 1 | -1) => {
+    const el = track.current;
+    if (!el || !el.children.length) return;
+    // Move a whole page of cards, wrapping around at either end.
+    const card = (el.children[0] as HTMLElement).offsetWidth + 14;
+    const perPage = Math.max(1, Math.floor((el.clientWidth + 14) / card));
+    const lastStart = Math.max(0, el.children.length - perPage);
+    const current = Math.round(el.scrollLeft / card);
+    const next = direction === 1 ? (current >= lastStart ? 0 : Math.min(lastStart, current + perPage)) : current <= 0 ? lastStart : Math.max(0, current - perPage);
+    el.scrollTo({ left: next * card, behavior: "smooth" });
+    setView({ first: next, last: Math.min(el.children.length, next + perPage) });
+  };
+
+  // Glide on its own every few seconds; pause while the pointer or focus is on it.
+  useEffect(() => {
+    if (paused || shown.length < 2) return;
+    const timer = window.setInterval(() => step(1), 8000);
+    return () => window.clearInterval(timer);
+  }, [paused, shown.length]);
 
   return (
     <Panel className="news-panel">
       <PanelTitle
-        eyebrow={feed.fetchedAt ? `UPDATED ${relativeDay(new Date(feed.fetchedAt)).toUpperCase()} · ${timeLabel(new Date(feed.fetchedAt))}` : "AI HIGHLIGHTS"}
+        eyebrow={feed.generatedAt ? `UPDATED ${sinceLabel(feed.generatedAt).toUpperCase()} · BBC · GUARDIAN · NPR · AL JAZEERA · NASA` : "TOP STORIES"}
         title="Latest News"
         action={
           <div className="news-actions">
-            <button className="text-button" onClick={() => setSetup(!setup)}>Settings</button>
-            <button className="primary-button" onClick={() => refreshNews()} disabled={status.busy || !apiKey.trim()}><Icon name="refresh" size={14}/> {status.busy ? "Refreshing…" : "Refresh"}</button>
+            {shown.length > 0 && <span className="news-count">{view.first + 1}–{view.last} of {shown.length}</span>}
+            <button className="icon-button" onClick={() => step(-1)} aria-label="Previous stories">‹</button>
+            <button className="icon-button" onClick={() => step(1)} aria-label="Next stories">›</button>
+            <button className="secondary-button" onClick={() => refreshNews()} disabled={status.busy}><Icon name="refresh" size={14}/> {status.busy ? "Loading…" : "Refresh"}</button>
           </div>
         }
       />
-      {(setup || !apiKey.trim()) && (
-        <div className="gcal-setup">
-          <label>Topics<input value={topics} onChange={(event) => setTopics(event.target.value)} placeholder={DEFAULT_TOPICS}/></label>
-          <label>Anthropic API key<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value.trim())} placeholder="sk-ant-…" autoComplete="off"/></label>
-          <details>
-            <summary>How this works</summary>
-            <p>Claude searches the web for the latest stories on your topics and writes a short highlight for each, with a link to the original article. It refreshes on its own every 6 hours while the dashboard is open, or whenever you press Refresh. Each refresh is a paid API call (a few cents).</p>
-            <p>Create a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a> and set a monthly spend limit there. The key is kept only in this browser; it is not synced to Drive or included in backups, so add it on each device.</p>
-          </details>
-        </div>
-      )}
       {status.error && <p className="gcal-error">{status.error}</p>}
-      {topicList.length > 2 && (
+      {topics.length > 2 && (
         <div className="news-topics">
-          {topicList.map((name) => <button key={name} className={name === topic ? "active" : ""} onClick={() => setTopic(name)}>{name}</button>)}
+          {topics.map((name) => <button key={name} className={name === topic ? "active" : ""} onClick={() => setTopic(name)}>{name}</button>)}
         </div>
       )}
-      <div className={`news-grid ${status.busy ? "busy" : ""}`}>
+      <div className="news-track" ref={track} onScroll={measure} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>
         {shown.map((item) => (
           <article className="news-card" key={item.url}>
-            <small>{item.topic}{item.published ? ` · ${shortDate(item.published)}` : ""}</small>
+            <a className="news-image" href={item.url} target="_blank" rel="noreferrer" tabIndex={-1} aria-hidden="true">
+              {item.image ? <img src={item.image} alt="" loading="lazy" referrerPolicy="no-referrer"/> : <span>{item.topic}</span>}
+            </a>
+            <small>{item.topic}{item.published ? ` · ${sinceLabel(item.published)}` : ""}</small>
             <h3><a href={item.url} target="_blank" rel="noreferrer">{item.headline}</a></h3>
-            <p>{item.highlight}</p>
+            {item.summary && <p>{item.summary}</p>}
             <a className="news-source" href={item.url} target="_blank" rel="noreferrer">{item.source || hostOf(item.url)} <Icon name="external" size={12}/></a>
           </article>
         ))}
       </div>
-      {feed.items.length === 0 && !status.busy && apiKey.trim() && <p className="empty">No news loaded yet. Press Refresh.</p>}
-      {feed.items.length === 0 && status.busy && <p className="empty">Searching the web and writing highlights… this takes about a minute.</p>}
+      {items.length === 0 && !status.busy && !status.error && <p className="empty">No news yet.</p>}
     </Panel>
   );
 }

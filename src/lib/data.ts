@@ -4,7 +4,9 @@ import { addDays, dateKey, uid } from "./utils";
 export type Tab = "Overview" | "Focus" | "Goals" | "Investments" | "Advisor";
 
 // scheduleId marks a task fetched from the Daily Schedule; those reset each morning. Tasks without one stay until closed.
-export type DailyTask = { id: string; text: string; time: string; done: boolean; scheduleId?: string };
+// closedOn hides a schedule task for that day only; it comes back the next morning.
+export type DailyTask = { id: string; text: string; time: string; done: boolean; scheduleId?: string; closedOn?: string };
+export const isClosedToday = (task: DailyTask, today = dateKey()) => task.closedOn === today;
 export type Goal = { id: string; text: string; tag: string; progress: number; done: boolean };
 export type Note = { id: string; text: string; createdAt: string };
 export type CalEvent = { id: string; title: string; date: string; time: string };

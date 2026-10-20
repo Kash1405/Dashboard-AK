@@ -105,6 +105,7 @@ const tasksTable = listTable<DailyTask>("data", "Daily Tasks", "daily.tasks", [
   ["Time", (t) => t.time, (s) => ({ time: time(s) })],
   ["Done", (t) => t.done, (s) => ({ done: yes(s) })],
   ["Schedule ID", (t) => t.scheduleId ?? "", (s) => ({ scheduleId: s.trim() || undefined })],
+  ["Closed On", (t) => t.closedOn ?? "", (s) => ({ closedOn: s.trim() ? date(s) : undefined })],
 ]);
 
 const goalsTable = listTable<Goal>("data", "Goals", "goals", [

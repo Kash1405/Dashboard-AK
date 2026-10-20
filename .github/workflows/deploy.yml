@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  schedule:
+    # Rebuild every 2 hours so the Latest News carousel stays fresh.
+    - cron: "17 */2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -27,6 +30,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Fetch latest news
+        # If the feeds can't be read, keep the news that is already live.
+        run: |
+          node scripts/fetch-news.mjs || curl -fsSL "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/news.json" -o public/news.json || true
       - run: pnpm run build
         env:
           GITHUB_PAGES_BASE: /${{ github.event.repository.name }}/
