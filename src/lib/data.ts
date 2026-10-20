@@ -8,6 +8,7 @@ export type DailyTask = { id: string; text: string; time: string; done: boolean;
 export type Goal = { id: string; text: string; tag: string; progress: number; done: boolean };
 export type Note = { id: string; text: string; createdAt: string };
 export type CalEvent = { id: string; title: string; date: string; time: string };
+export type QuickLink = { id: string; name: string; url: string };
 export type Settings = { name: string };
 
 export type FocusTimer = { duration: number; endsAt: number | null; remaining: number };
@@ -38,6 +39,7 @@ export const useDailyReset = () => useStored<string>("daily.lastReset", dateKey(
 export const useGoals = () => useStored<Goal[]>("goals", defaultGoals);
 export const useNotes = () => useStored<Note[]>("notes", defaultNotes);
 export const useEvents = () => useStored<CalEvent[]>("events", defaultEvents);
+export const useLinks = () => useStored<QuickLink[]>("links", []);
 
 export const useFocusTimer = () => useStored<FocusTimer>("focus.timer", { duration: 25 * 60, endsAt: null, remaining: 25 * 60 });
 export const useFocusDraft = () => useStored<FocusDraft>("focus.draft", { task: "", description: "", linkedTaskId: "" });

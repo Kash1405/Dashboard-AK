@@ -50,7 +50,7 @@ export default function SyncChip() {
     state === "pending" ? "Saving…" :
     state === "synced" ? `Synced ${timeLabel(new Date(status.at))}` :
     state === "error" ? "Sync error" :
-    state === "signed-out" ? "Sign in to sync" : "Drive sync off";
+    state === "signed-out" ? (meta.enabled ? "Click to reconnect" : "Sign in to sync") : "Drive sync off";
   const connected = meta.enabled && !!clientId;
 
   return (
@@ -67,7 +67,7 @@ export default function SyncChip() {
           {status.error && <p className="sync-error">{status.error}</p>}
           {connected ? (
             <>
-              <p className="sync-copy">Your <b>Personal Dashboard</b> folder in Drive is the source of truth. Changes here save there within seconds. Edited a Sheet or the Notes doc? Press <b>Sync now</b> to load it.</p>
+              <p className="sync-copy">Your <b>Personal Dashboard</b> folder in Drive is the source of truth. Syncing is automatic: changes here save there within seconds, and changes from your other devices (or edits to the Sheets and Notes doc) load in every 30 seconds and whenever you come back to this tab. Google sessions last an hour; when one runs out, your next click anywhere renews it.</p>
               {meta.folderId && (
                 <ul className="sync-files">
                   {driveFiles.map(({ role, label, hint }) => meta.fileIds[role] && (
@@ -78,7 +78,7 @@ export default function SyncChip() {
               <div className="sync-buttons">
                 {state === "signed-out" || (state === "error" && !status.at)
                   ? <button className="primary-button" onClick={() => signIn()}>Sign in</button>
-                  : <button className="primary-button" onClick={() => syncNow(true)} disabled={state === "syncing"}><Icon name="refresh" size={14}/> Sync now</button>}
+                  : <button className="secondary-button" onClick={() => syncNow(true)} disabled={state === "syncing"}><Icon name="refresh" size={14}/> Check now</button>}
                 <button className="secondary-button" onClick={() => signOut()}>Sign out</button>
               </div>
             </>
