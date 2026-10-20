@@ -4,7 +4,7 @@ import { cars } from "../lib/cars";
 import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google";
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
-import { useSchedule } from "../lib/vault";
+import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
 import { quotes, useDailyTasks, useEvents, useGoals, useNotes, useSettings, type Tab } from "../lib/data";
 import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
 import { addDays, atTime, dateKey, pad, parseDateKey, pct, relativeDay, submitOnEnter, timeLabel, uid, useNow } from "../lib/utils";
@@ -15,6 +15,7 @@ export default function Overview({ onNavigate }: { onNavigate: (tab: Tab) => voi
   return (
     <main className="page">
       <Welcome now={now}/>
+      <QuotePanel/>
       <div className="overview-grid">
         <div className="main-column">
           <NextUp now={now}/>
@@ -23,7 +24,6 @@ export default function Overview({ onNavigate }: { onNavigate: (tab: Tab) => voi
         <aside className="side-column">
           <CalendarPanel/>
           <NotesPanel/>
-          <QuotePanel/>
         </aside>
       </div>
       <PortfolioSummary onNavigate={onNavigate}/>
@@ -146,6 +146,9 @@ function NextUp({ now }: { now: Date }) {
 function RunPlan() {
   const [tasks, setTasks] = useDailyTasks();
   const [goals, setGoals] = useGoals();
+  const [plan, setPlan] = useGoalTable();
+  const today = dateKey();
+  const focused = plan.filter((row) => inFocus(row, today)).sort((a, b) => Number(isOverdue(b, today)) - Number(isOverdue(a, today)) || (a.end || "9").localeCompare(b.end || "9"));
   const [taskText, setTaskText] = useState("");
   const [taskTime, setTaskTime] = useState("");
   const [goalText, setGoalText] = useState("");
@@ -166,6 +169,7 @@ function RunPlan() {
     setGoalTag("");
   };
   const toggleTask = (id: string) => setTasks(tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)));
+  const togglePlan = (row: GoalRow) => setPlan(plan.map((r) => (r.id === row.id ? { ...r, status: r.status === "Done" ? (r.end && r.end < today ? "Overdue" : "In Progress") : "Done" } : r)));
   const toggleGoal = (id: string) => setGoals(goals.map((goal) => (goal.id === id ? { ...goal, done: !goal.done, progress: goal.done ? goal.progress : 100 } : goal)));
 
   return (
@@ -173,7 +177,7 @@ function RunPlan() {
       <PanelTitle eyebrow="01 / RUN PLAN" title="Tasks" action={<span className="progress-label">{doneCount} of {tasks.length} daily tasks done</span>}/>
       <div className="plan-grid">
         <section className="plan-section">
-          <div className="subhead"><h3>Daily Tasks</h3><span>Checkboxes reset every morning</span></div>
+          <div className="subhead"><h3>Daily Tasks</h3><span>Schedule items reset every morning</span></div>
           <div className="task-progress"><span style={{ width: `${tasks.length ? (doneCount / tasks.length) * 100 : 0}%` }}/></div>
           <div className="task-list">
             {sortedTasks.map((task) => (
@@ -181,21 +185,38 @@ function RunPlan() {
                 <button className="checkbox" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "Uncheck" : "Check"} ${task.text}`}>{task.done && <Icon name="check" size={13}/>}</button>
                 <span className="task-name" onClick={() => toggleTask(task.id)}>{task.text}</span>
                 <time>{task.time || "Anytime"}</time>
-                <button className="row-delete" onClick={() => setTasks(tasks.filter((item) => item.id !== task.id))} aria-label={`Delete ${task.text}`}><Icon name="x" size={13}/></button>
+                {task.scheduleId ? <span className="row-delete-spacer"/> : <button className="row-delete" onClick={() => setTasks(tasks.filter((item) => item.id !== task.id))} aria-label={`Close ${task.text}`} title="Close task"><Icon name="x" size={13}/></button>}
               </div>
             ))}
-            {tasks.length === 0 && <p className="empty">No daily tasks yet. Add your routine below.</p>}
+            {tasks.length === 0 && <p className="empty">No daily tasks yet. Fill in your Daily Schedule or add a task below.</p>}
           </div>
           <form className="quick-add with-extra" onKeyDown={submitOnEnter} onSubmit={(event) => { event.preventDefault(); addTask(); }}>
-            <input value={taskText} onChange={(event) => setTaskText(event.target.value)} placeholder="Add a daily task..." aria-label="New daily task"/>
+            <input value={taskText} onChange={(event) => setTaskText(event.target.value)} placeholder="Add a task (stays until you close it)..." aria-label="New task"/>
             <input type="time" value={taskTime} onChange={(event) => setTaskTime(event.target.value)} aria-label="Time (optional)" title="Time (optional)"/>
             <button type="submit"><Icon name="plus" size={14}/> Add</button>
           </form>
         </section>
 
         <section className="plan-section">
-          <div className="subhead"><h3>Overall Goals</h3><span>{goals.filter((goal) => goal.done).length} of {goals.length} achieved</span></div>
+          <div className="subhead"><h3>Overall Focused Goals</h3><span>{focused.filter((row) => row.status === "Done").length + goals.filter((goal) => goal.done).length} of {focused.length + goals.length} achieved</span></div>
           <div className="goal-list">
+            {focused.map((row) => {
+              const done = row.status === "Done";
+              const overdue = isOverdue(row, today);
+              return (
+                <div className={`goal-row ${done ? "done" : ""}`} key={row.id}>
+                  <button className="checkbox" onClick={() => togglePlan(row)} aria-label={`${done ? "Uncheck" : "Check"} ${row.skill}`}>{done && <Icon name="check" size={13}/>}</button>
+                  <div className="goal-body">
+                    <div className="goal-top">
+                      <span className="task-name" onClick={() => togglePlan(row)}>{row.skill || "Untitled"}{overdue && <b className="overdue-label">Overdue</b>}</span>
+                      {row.type && <em>{row.type}</em>}
+                    </div>
+                    <p className="goal-dates">{shortDate(row.start)} → {shortDate(row.end)} · {row.status}</p>
+                  </div>
+                  <span/>
+                </div>
+              );
+            })}
             {goals.map((goal) => (
               <div className={`goal-row ${goal.done ? "done" : ""}`} key={goal.id}>
                 <button className="checkbox" onClick={() => toggleGoal(goal.id)} aria-label={`${goal.done ? "Uncheck" : "Check"} ${goal.text}`}>{goal.done && <Icon name="check" size={13}/>}</button>
@@ -210,7 +231,7 @@ function RunPlan() {
                 <button className="row-delete" onClick={() => setGoals(goals.filter((item) => item.id !== goal.id))} aria-label={`Delete ${goal.text}`}><Icon name="x" size={13}/></button>
               </div>
             ))}
-            {goals.length === 0 && <p className="empty">No goals yet. What are you chasing this season?</p>}
+            {goals.length === 0 && focused.length === 0 && <p className="empty">No goals yet. What are you chasing this season?</p>}
           </div>
           <form className="quick-add with-extra" onKeyDown={submitOnEnter} onSubmit={(event) => { event.preventDefault(); addGoal(); }}>
             <input value={goalText} onChange={(event) => setGoalText(event.target.value)} placeholder="Add a long-term goal..." aria-label="New goal"/>
@@ -222,6 +243,8 @@ function RunPlan() {
     </Panel>
   );
 }
+
+const shortDate = (key?: string) => (key ? parseDateKey(key).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "Open");
 
 type AgendaEvent = { id: string; title: string; date: string; time: string; source: "local" | "google"; link?: string };
 

@@ -4,7 +4,7 @@ import { Icon } from "./ui";
 export type Column<T> = {
   key: keyof T & string;
   label: string;
-  kind?: "text" | "textarea" | "select" | "time";
+  kind?: "text" | "textarea" | "select" | "time" | "date";
   options?: string[];
   suggestions?: string[];
   width?: string;
@@ -126,5 +126,5 @@ function Field<T>({ column, value, listId, autoFocus, onChange, onEnter, onEscap
       {column.options!.map((option) => <option key={option}>{option}</option>)}
     </select>
   );
-  return <input type={column.kind === "time" ? "time" : "text"} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={keys} aria-label={column.label} list={column.suggestions ? listId : undefined} autoFocus={autoFocus}/>;
+  return <input type={column.kind === "time" || column.kind === "date" ? column.kind : "text"} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={keys} aria-label={column.label} list={column.suggestions ? listId : undefined} autoFocus={autoFocus}/>;
 }

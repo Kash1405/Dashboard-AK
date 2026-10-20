@@ -2,12 +2,13 @@ import { useEffect } from "react";
 import LockScreen from "./components/LockScreen";
 import SyncChip from "./components/SyncChip";
 import { Icon } from "./components/ui";
-import { timerRemaining, useDailyReset, useDailyTasks, useFocusDraft, useFocusFlash, useFocusTimer, useSettings, type Tab } from "./lib/data";
+import { legacyDefaultTasks, timerRemaining, useDailyReset, useDailyTasks, useFocusDraft, useFocusFlash, useFocusTimer, useSettings, type Tab } from "./lib/data";
 import { useCompleteSession } from "./lib/focus";
 import { hasToken, syncGoogle, useGcalSettings } from "./lib/gcal";
 import { useDriveSync, useSyncMeta } from "./lib/sync";
 import { refreshPortfolio, totals, useHoldings, usePortfolioSettings, useRefreshStatus, useSnapshots } from "./lib/portfolio";
 import { useStored } from "./lib/store";
+import { isOverdue, useGoalTable, useSchedule } from "./lib/vault";
 import { dateKey, formatDuration, pad, playChime, useNow } from "./lib/utils";
 import Advisor from "./tabs/Advisor";
 import Focus from "./tabs/Focus";
@@ -65,7 +66,9 @@ function useBackgroundJobs() {
   const [, setFlash] = useFocusFlash();
   const complete = useCompleteSession();
   const [lastReset, setLastReset] = useDailyReset();
-  const [, setTasks] = useDailyTasks();
+  const [tasks, setTasks] = useDailyTasks();
+  const [schedule] = useSchedule();
+  const [goalRows, setGoalRows] = useGoalTable();
   const [holdings] = useHoldings();
   const [, setSnapshots] = useSnapshots();
   const [portfolio] = usePortfolioSettings();
@@ -87,13 +90,33 @@ function useBackgroundJobs() {
     document.title = timer.endsAt !== null ? `▶ ${pad(Math.floor(remaining / 60))}:${pad(remaining % 60)} · Focus` : "KASH · Personal Command";
   }, [timer.endsAt, remaining]);
 
-  // New day: untick the daily tasks.
+  // New day: untick only the tasks fetched from the Daily Schedule. Tasks added by hand stay as they are until closed.
   useEffect(() => {
     if (lastReset !== today) {
-      setTasks((tasks) => tasks.map((task) => ({ ...task, done: false })));
+      setTasks((list) => list.map((task) => (task.scheduleId ? { ...task, done: false } : task)));
       setLastReset(today);
     }
   }, [today, lastReset, setTasks, setLastReset]);
+
+  // Mirror the Daily Schedule's activities and times into the daily tasks; drop the old starter tasks.
+  useEffect(() => {
+    const rows = schedule.filter((row) => row.activity.trim());
+    const next = [
+      ...tasks.filter((task) => (task.scheduleId ? rows.some((row) => row.id === task.scheduleId) : !legacyDefaultTasks.includes(task.text))),
+      ...rows.filter((row) => !tasks.some((task) => task.scheduleId === row.id)).map((row) => ({ id: `s-${row.id}`, text: row.activity.trim(), time: row.start, done: false, scheduleId: row.id })),
+    ].map((task) => {
+      const row = task.scheduleId ? rows.find((r) => r.id === task.scheduleId) : undefined;
+      return row && (task.text !== row.activity.trim() || task.time !== row.start) ? { ...task, text: row.activity.trim(), time: row.start } : task;
+    });
+    if (next.length !== tasks.length || next.some((task, i) => task !== tasks[i])) setTasks(next);
+  }, [schedule, tasks, setTasks]);
+
+  // Goals past their end date that are not done become Overdue.
+  useEffect(() => {
+    if (goalRows.some((row) => row.status !== "Overdue" && isOverdue(row, today))) {
+      setGoalRows(goalRows.map((row) => (row.status !== "Overdue" && isOverdue(row, today) ? { ...row, status: "Overdue" } : row)));
+    }
+  }, [goalRows, today, setGoalRows]);
 
   // Record one portfolio value per day for the performance chart.
   useEffect(() => {

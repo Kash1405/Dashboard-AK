@@ -1,11 +1,12 @@
 import { useState } from "react";
 import EditableTable from "../components/EditableTable";
 import { Panel, PanelTitle } from "../components/ui";
-import { uid } from "../lib/utils";
+import { dateKey, parseDateKey, uid } from "../lib/utils";
 import { useGoalTable, type GoalRow, type GoalStatus } from "../lib/vault";
 
-const statuses: GoalStatus[] = ["Not Started", "In Progress", "Done", "On Hold"];
+const statuses: GoalStatus[] = ["Not Started", "In Progress", "Done", "On Hold", "Overdue"];
 const statusClass = (status: string) => status.toLowerCase().replace(/\s+/g, "-");
+const shortDate = (key?: string) => (key ? parseDateKey(key).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—");
 
 export default function Goals() {
   const [rows, setRows] = useGoalTable();
@@ -67,13 +68,15 @@ export default function Goals() {
           empty="No items match. Add one below."
           newRow={() => {
             setQuery("");
-            return { id: uid(), type: typeFilter !== "All" ? typeFilter : "Hard Skill", skill: "", description: "", comments: "", status: statusFilter !== "All" ? (statusFilter as GoalStatus) : "Not Started" };
+            return { id: uid(), type: typeFilter !== "All" ? typeFilter : "Hard Skill", skill: "", description: "", comments: "", start: dateKey(), end: "", status: statusFilter !== "All" ? (statusFilter as GoalStatus) : "Not Started" };
           }}
           columns={[
             { key: "type", label: "Type", width: "120px", suggestions: ["Soft Skill", "Hard Skill", "Hard Goal", ...types], render: (row) => <span className="type-tag">{row.type}</span> },
             { key: "skill", label: "Skill / Goal", width: "190px", render: (row) => <strong className="cell-strong">{row.skill || "—"}</strong> },
             { key: "description", label: "Description", kind: "textarea" },
             { key: "comments", label: "Comments", kind: "textarea" },
+            { key: "start", label: "Start", kind: "date", width: "125px", render: (row) => <span className="cell-text">{shortDate(row.start)}</span> },
+            { key: "end", label: "End", kind: "date", width: "125px", render: (row) => <span className="cell-text">{shortDate(row.end)}</span> },
             { key: "status", label: "Status", kind: "select", options: statuses, width: "130px", render: (row) => (
               <button className={`status-pill ${statusClass(row.status)}`} onClick={() => cycleStatus(row)} title="Click to change status">{row.status}</button>
             ) },

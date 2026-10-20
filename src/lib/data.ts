@@ -3,7 +3,8 @@ import { addDays, dateKey, uid } from "./utils";
 
 export type Tab = "Overview" | "Focus" | "Goals" | "Investments" | "Advisor";
 
-export type DailyTask = { id: string; text: string; time: string; done: boolean };
+// scheduleId marks a task fetched from the Daily Schedule; those reset each morning. Tasks without one stay until closed.
+export type DailyTask = { id: string; text: string; time: string; done: boolean; scheduleId?: string };
 export type Goal = { id: string; text: string; tag: string; progress: number; done: boolean };
 export type Note = { id: string; text: string; createdAt: string };
 export type CalEvent = { id: string; title: string; date: string; time: string };
@@ -13,12 +14,8 @@ export type FocusTimer = { duration: number; endsAt: number | null; remaining: n
 export type FocusLog = { id: string; task: string; description: string; seconds: number; completedAt: string };
 export type FocusDraft = { task: string; description: string; linkedTaskId: string };
 
-const defaultTasks: DailyTask[] = [
-  { id: uid(), text: "Morning training", time: "06:30", done: false },
-  { id: uid(), text: "Review markets before open", time: "09:00", done: false },
-  { id: uid(), text: "Deep work sprint", time: "10:00", done: false },
-  { id: uid(), text: "Evening journal & reset", time: "21:30", done: false },
-];
+// Starter tasks from older versions; removed once the Daily Schedule takes over.
+export const legacyDefaultTasks = ["Morning training", "Review markets before open", "Deep work sprint", "Evening journal & reset"];
 
 const defaultGoals: Goal[] = [
   { id: uid(), text: "Complete investment thesis", tag: "Q4", progress: 40, done: false },
@@ -36,7 +33,7 @@ const defaultEvents: CalEvent[] = [
 ];
 
 export const useSettings = () => useStored<Settings>("settings", { name: "" });
-export const useDailyTasks = () => useStored<DailyTask[]>("daily.tasks", defaultTasks);
+export const useDailyTasks = () => useStored<DailyTask[]>("daily.tasks", []);
 export const useDailyReset = () => useStored<string>("daily.lastReset", dateKey());
 export const useGoals = () => useStored<Goal[]>("goals", defaultGoals);
 export const useNotes = () => useStored<Note[]>("notes", defaultNotes);
