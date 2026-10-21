@@ -868,3 +868,5 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
   .news-count { display: none; }
   .news-card { flex-basis: 86%; }
 }
+.news-coverage { margin-left: 8px; padding: 1px 6px; border: 1px solid #3a3c42; border-radius: 999px; color: #b4b6bb; font-weight: 600; letter-spacing: .08em; }
+.done-toggle { font-size: 12.5px; padding: 0; color: #92949a; }

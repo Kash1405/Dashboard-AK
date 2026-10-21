@@ -1,10 +1,11 @@
 import { setStored, useStored } from "./store";
 
-// Latest news from public RSS feeds (BBC, The Guardian, NPR, Al Jazeera, NASA). The site's
-// GitHub workflow gathers about 20 stories across topics into news.json every 2 hours
-// (scripts/fetch-news.mjs), so the dashboard needs no news API or key.
+// The day's biggest stories from public RSS feeds (BBC, The New York Times, The Guardian, NPR).
+// The site's GitHub workflow ranks them by editorial prominence and how many outlets carry each
+// story, keeping about 20 across topics in news.json every 2 hours (scripts/fetch-news.mjs),
+// so the dashboard needs no news API or key.
 
-export type NewsItem = { topic: string; source: string; headline: string; summary: string; url: string; image: string; published: string };
+export type NewsItem = { topic: string; source: string; headline: string; summary: string; url: string; image: string; published: string; coverage?: number };
 export type NewsFeed = { items: NewsItem[]; generatedAt: string };
 export type NewsStatus = { busy: boolean; error: string; checkedAt: number };
 

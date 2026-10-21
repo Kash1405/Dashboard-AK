@@ -7,6 +7,7 @@ import { currentBlock } from "../lib/schedule";
 import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
 import { isClosedToday, quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
 import { RECHECK_MS, refreshNews, useNewsFeed, useNewsStatus } from "../lib/news";
+import { useStored } from "../lib/store";
 import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
 import { addDays, atTime, dateKey, pad, parseDateKey, pct, relativeDay, submitOnEnter, timeLabel, uid, useNow } from "../lib/utils";
 
@@ -161,8 +162,10 @@ function RunPlan() {
   const [goalText, setGoalText] = useState("");
   const [goalTag, setGoalTag] = useState("");
   const [editing, setEditing] = useState<{ id: string; text: string; time: string } | null>(null);
+  const [showDone, setShowDone] = useStored("tasks.showDone", false);
   const doneCount = tasks.filter((task) => task.done).length;
-  const sortedTasks = [...tasks].sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
+  // Checked-off tasks are hidden unless "Show completed" is on.
+  const sortedTasks = tasks.filter((task) => showDone || !task.done).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
 
   const addTask = () => {
     if (!taskText.trim()) return;
@@ -191,7 +194,10 @@ function RunPlan() {
       <PanelTitle eyebrow="01 / RUN PLAN" title="Tasks" action={<span className="progress-label">{doneCount} of {tasks.length} daily tasks done</span>}/>
       <div className="plan-grid">
         <section className="plan-section">
-          <div className="subhead"><h3>Daily Tasks</h3><span>Schedule items reset every morning</span></div>
+          <div className="subhead">
+            <h3>Daily Tasks</h3>
+            {doneCount > 0 ? <button className="text-button done-toggle" onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>{showDone ? "Hide completed" : `Show ${doneCount} completed`}</button> : <span>Schedule items reset every morning</span>}
+          </div>
           <div className="task-progress"><span style={{ width: `${tasks.length ? (doneCount / tasks.length) * 100 : 0}%` }}/></div>
           <div className="task-list">
             {sortedTasks.map((task) => editing?.id === task.id ? (
@@ -211,6 +217,7 @@ function RunPlan() {
               </div>
             ))}
             {tasks.length === 0 && <p className="empty">No daily tasks yet. Fill in your Daily Schedule or add a task below.</p>}
+            {tasks.length > 0 && sortedTasks.length === 0 && <p className="empty">All done for today.</p>}
           </div>
           <form className="quick-add with-extra" onKeyDown={submitOnEnter} onSubmit={(event) => { event.preventDefault(); addTask(); }}>
             <input value={taskText} onChange={(event) => setTaskText(event.target.value)} placeholder="Add a task (stays until you close it)..." aria-label="New task"/>
@@ -520,7 +527,9 @@ function NewsPanel() {
   const [view, setView] = useState({ first: 0, last: 0 });
   const track = useRef<HTMLDivElement>(null);
   const items = feed.items ?? [];
-  const topics = ["All", ...Array.from(new Set(items.map((item) => item.topic).filter(Boolean)))];
+  const order = ["Top Stories", "World", "Business", "Technology", "Science", "Sport"];
+  const rank = (topic: string) => order.indexOf(topic) + 1 || order.length + 1;
+  const topics = ["All", ...Array.from(new Set(items.map((item) => item.topic).filter(Boolean))).sort((a, b) => rank(a) - rank(b))];
   const shown = items.filter((item) => topic === "All" || item.topic === topic);
 
   // Load on open and look for a newer file every half hour (the site rebuilds it every 2 hours).
@@ -566,7 +575,7 @@ function NewsPanel() {
   return (
     <Panel className="news-panel">
       <PanelTitle
-        eyebrow={feed.generatedAt ? `UPDATED ${sinceLabel(feed.generatedAt).toUpperCase()} · BBC · GUARDIAN · NPR · AL JAZEERA · NASA` : "TOP STORIES"}
+        eyebrow={feed.generatedAt ? `UPDATED ${sinceLabel(feed.generatedAt).toUpperCase()} · BBC · NYT · GUARDIAN · NPR` : "TOP STORIES"}
         title="Latest News"
         action={
           <div className="news-actions">
@@ -589,7 +598,7 @@ function NewsPanel() {
             <a className="news-image" href={item.url} target="_blank" rel="noreferrer" tabIndex={-1} aria-hidden="true">
               {item.image ? <img src={item.image} alt="" loading="lazy" referrerPolicy="no-referrer"/> : <span>{item.topic}</span>}
             </a>
-            <small>{item.topic}{item.published ? ` · ${sinceLabel(item.published)}` : ""}</small>
+            <small>{item.topic}{item.published ? ` · ${sinceLabel(item.published)}` : ""}{(item.coverage ?? 0) > 1 && <b className="news-coverage" title="Outlets carrying this story">{item.coverage} outlets</b>}</small>
             <h3><a href={item.url} target="_blank" rel="noreferrer">{item.headline}</a></h3>
             {item.summary && <p>{item.summary}</p>}
             <a className="news-source" href={item.url} target="_blank" rel="noreferrer">{item.source || hostOf(item.url)} <Icon name="external" size={12}/></a>
