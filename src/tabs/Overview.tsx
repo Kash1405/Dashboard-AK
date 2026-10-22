@@ -5,7 +5,7 @@ import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
 import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
-import { isClosedToday, quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
+import { isClosedToday, quotes, refreshScheduleTasks, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
 import { RECHECK_MS, refreshNews, useNewsFeed, useNewsStatus } from "../lib/news";
 import { useStored } from "../lib/store";
 import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
@@ -152,6 +152,7 @@ function NextUp({ now }: { now: Date }) {
 
 function RunPlan() {
   const [allTasks, setTasks] = useDailyTasks();
+  const [schedule] = useSchedule();
   const tasks = allTasks.filter((task) => !isClosedToday(task));
   const [goals, setGoals] = useGoals();
   const [plan, setPlan] = useGoalTable();
@@ -196,7 +197,10 @@ function RunPlan() {
         <section className="plan-section">
           <div className="subhead">
             <h3>Daily Tasks</h3>
-            {doneCount > 0 ? <button className="text-button done-toggle" onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>{showDone ? "Hide completed" : `Show ${doneCount} completed`}</button> : <span>Schedule items reset every morning</span>}
+            <div className="subhead-actions">
+              {doneCount > 0 ? <button className="text-button done-toggle" onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>{showDone ? "Hide completed" : `Show ${doneCount} completed`}</button> : <span>Schedule items reset every morning</span>}
+              <button className="text-button" onClick={() => setTasks(refreshScheduleTasks(allTasks, schedule))} title="Reload tasks from the Daily Schedule (tasks you added stay)">Refresh</button>
+            </div>
           </div>
           <div className="task-progress"><span style={{ width: `${tasks.length ? (doneCount / tasks.length) * 100 : 0}%` }}/></div>
           <div className="task-list">

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import LockScreen from "./components/LockScreen";
 import SyncChip from "./components/SyncChip";
 import { Icon } from "./components/ui";
-import { legacyDefaultTasks, timerRemaining, useDailyReset, useDailyTasks, useFocusDraft, useFocusFlash, useFocusTimer, useSettings, type Tab } from "./lib/data";
+import { legacyDefaultTasks, refreshScheduleTasks, SCHEDULE_TASKS_VERSION, timerRemaining, useDailyReset, useScheduleTasksVersion, useDailyTasks, useFocusDraft, useFocusFlash, useFocusTimer, useSettings, type Tab } from "./lib/data";
 import { useCompleteSession } from "./lib/focus";
 import { hasToken, syncGoogle, useGcalSettings } from "./lib/gcal";
 import { useDriveSync, useSyncMeta } from "./lib/sync";
@@ -68,6 +68,7 @@ function useBackgroundJobs() {
   const [lastReset, setLastReset] = useDailyReset();
   const [tasks, setTasks] = useDailyTasks();
   const [schedule] = useSchedule();
+  const [scheduleVersion, setScheduleVersion] = useScheduleTasksVersion();
   const [goalRows, setGoalRows] = useGoalTable();
   const [holdings] = useHoldings();
   const [, setSnapshots] = useSnapshots();
@@ -90,16 +91,20 @@ function useBackgroundJobs() {
     document.title = timer.endsAt !== null ? `▶ ${pad(Math.floor(remaining / 60))}:${pad(remaining % 60)} · Focus` : "KASH · Personal Command";
   }, [timer.endsAt, remaining]);
 
-  // New day: untick (and bring back any closed) tasks fetched from the Daily Schedule. Tasks added by hand stay as they are until closed.
+  const rebuildPending = lastReset !== today || scheduleVersion < SCHEDULE_TASKS_VERSION;
+  // New day: rebuild the tasks fetched from the Daily Schedule from scratch. Tasks added by hand stay as they are until closed.
   useEffect(() => {
-    if (lastReset !== today) {
-      setTasks((list) => list.map((task) => (task.scheduleId ? { ...task, done: false, closedOn: undefined } : task)));
+    if (rebuildPending) {
+      setTasks((list) => refreshScheduleTasks(list, schedule));
       setLastReset(today);
+      setScheduleVersion(SCHEDULE_TASKS_VERSION);
     }
-  }, [today, lastReset, setTasks, setLastReset]);
+  }, [rebuildPending, today, schedule, setTasks, setLastReset, setScheduleVersion]);
 
   // Mirror the Daily Schedule's activities and times into the daily tasks; drop the old starter tasks.
+  // Waits while the rebuild above is pending, so it never writes back the stale list.
   useEffect(() => {
+    if (rebuildPending) return;
     const rows = schedule.filter((row) => row.activity.trim());
     const next = [
       ...tasks.filter((task) => (task.scheduleId ? rows.some((row) => row.id === task.scheduleId) : !legacyDefaultTasks.includes(task.text))),
@@ -109,7 +114,7 @@ function useBackgroundJobs() {
       return row && (task.text !== row.activity.trim() || task.time !== row.start) ? { ...task, text: row.activity.trim(), time: row.start } : task;
     });
     if (next.length !== tasks.length || next.some((task, i) => task !== tasks[i])) setTasks(next);
-  }, [schedule, tasks, setTasks]);
+  }, [rebuildPending, schedule, tasks, setTasks]);
 
   // Goals past their end date that are not done become Overdue.
   useEffect(() => {

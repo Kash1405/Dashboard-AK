@@ -135,6 +135,7 @@ h1, h2, h3, p { margin-top: 0; }
 .subhead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .subhead h3 { margin: 0; font: 600 18px 'Play'; letter-spacing: .03em; }
 .subhead span { color: #92949a; font-size: 12.5px; }
+.subhead-actions { display: flex; align-items: baseline; gap: 12px; }
 .task-progress { height: 3px; background: #292b30; margin-bottom: 6px; }
 .task-progress span { display: block; height: 100%; background: var(--red); transition: width .3s; }
 .task-list, .goal-list { display: flex; flex-direction: column; }

@@ -1,4 +1,5 @@
 import { useStored } from "./store";
+import type { ScheduleRow } from "./vault";
 import { addDays, dateKey, uid } from "./utils";
 
 export type Tab = "Overview" | "Focus" | "Goals" | "Investments" | "Advisor";
@@ -7,6 +8,11 @@ export type Tab = "Overview" | "Focus" | "Goals" | "Investments" | "Advisor";
 // closedOn hides a schedule task for that day only; it comes back the next morning.
 export type DailyTask = { id: string; text: string; time: string; done: boolean; scheduleId?: string; closedOn?: string };
 export const isClosedToday = (task: DailyTask, today = dateKey()) => task.closedOn === today;
+// Rebuild every schedule task fresh from the Daily Schedule (unticked, not closed); tasks added by hand are kept as they are.
+export const refreshScheduleTasks = (tasks: DailyTask[], schedule: ScheduleRow[]): DailyTask[] => [
+  ...tasks.filter((task) => !task.scheduleId),
+  ...schedule.filter((row) => row.activity.trim()).map((row) => ({ id: `s-${row.id}`, text: row.activity.trim(), time: row.start, done: false, scheduleId: row.id })),
+];
 export type Goal = { id: string; text: string; tag: string; progress: number; done: boolean };
 export type Note = { id: string; text: string; createdAt: string };
 export type CalEvent = { id: string; title: string; date: string; time: string };
@@ -38,6 +44,9 @@ const defaultEvents: CalEvent[] = [
 export const useSettings = () => useStored<Settings>("settings", { name: "" });
 export const useDailyTasks = () => useStored<DailyTask[]>("daily.tasks", []);
 export const useDailyReset = () => useStored<string>("daily.lastReset", dateKey());
+// Bump to rebuild schedule tasks once on each device, outside the morning reset.
+export const SCHEDULE_TASKS_VERSION = 1;
+export const useScheduleTasksVersion = () => useStored<number>("daily.scheduleVersion", 0);
 export const useGoals = () => useStored<Goal[]>("goals", defaultGoals);
 export const useNotes = () => useStored<Note[]>("notes", defaultNotes);
 export const useEvents = () => useStored<CalEvent[]>("events", defaultEvents);
