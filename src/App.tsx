@@ -184,7 +184,7 @@ export default function App() {
       {active === "Overview" && <Overview onNavigate={setActive}/>}
       {active === "Focus" && <Focus/>}
       {active === "Goals" && <Goals/>}
-      {active === "Experience" && <Experience onNavigate={setActive}/>}
+      {active === "Experience" && <Experience/>}
       {active === "Investments" && <Investments/>}
       {active === "Advisor" && <Advisor/>}
       <footer><span>KASH COMMAND · PRIVATE DASHBOARD</span><span>{driveOn ? "Source of truth: Google Drive › Personal Dashboard" : "Saved in this browser · connect Google Drive to sync"} <i/></span></footer>

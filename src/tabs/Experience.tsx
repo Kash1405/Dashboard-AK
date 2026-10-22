@@ -1,9 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon, Panel, PanelTitle } from "../components/ui";
-import type { Tab } from "../lib/data";
 import { careerMonths, formatMonth, formatSpan, monthsBetween, splitLines, splitTags, useExperience, type ExpEntry, type ExpSection } from "../lib/experience";
 import { uid } from "../lib/utils";
-import { useGoalTable } from "../lib/vault";
 
 type Field = { key: keyof ExpEntry; label: string; kind?: "month" | "textarea"; hint?: string; wide?: boolean };
 
@@ -89,9 +87,8 @@ const Chips = ({ tags, tone = "" }: { tags: string; tone?: string }) => {
   return items.length ? <div className={`exp-chips ${tone}`}>{items.map((t) => <span key={t}>{t}</span>)}</div> : null;
 };
 
-export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+export default function Experience() {
   const [entries, setEntries] = useExperience();
-  const [goals] = useGoalTable();
   const [editing, setEditing] = useState<{ draft: ExpEntry; isNew: boolean } | null>(null);
 
   const of = (section: ExpSection) => entries.filter((e) => e.section === section);
@@ -99,7 +96,6 @@ export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => v
   const roles = of("Role").sort(byRecent);
   const education = of("Education").sort(byRecent);
   const awards = of("Award").sort((a, b) => b.start.localeCompare(a.start));
-  const learning = goals.filter((g) => g.status === "In Progress");
 
   const months = careerMonths(roles);
   const industries = new Set(roles.flatMap((r) => splitTags(r.tags)));
@@ -156,7 +152,7 @@ export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => v
   return (
     <main className="page experience-page">
       <div className="welcome">
-        <div><p className="eyebrow red">CAREER TELEMETRY</p><h1>Experience & Learning.</h1><p>Every season so far: where I've raced, what I've built, and what I'm learning next.</p></div>
+        <div><p className="eyebrow red">CAREER TELEMETRY</p><h1>Experience & Learning.</h1><p>Every season so far: where I've raced, what I've built, and what I picked up along the way.</p></div>
         <p className="exp-hint">Double-click any card, or use the pencil, to edit it.</p>
       </div>
 
@@ -226,17 +222,7 @@ export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => v
 
         <div className="exp-side">
           <Panel>
-            <PanelTitle eyebrow="03 / IN DEVELOPMENT" title="Currently Learning" action={<button className="text-button strong" onClick={() => onNavigate("Goals")}>Goals <Icon name="arrow" size={14}/></button>}/>
-            {learning.length ? (
-              <ul className="exp-learning">
-                {learning.slice(0, 6).map((g) => <li key={g.id}><i/><div><strong>{g.skill || "Untitled"}</strong><span>{g.type}</span></div></li>)}
-              </ul>
-            ) : <p className="empty small">Nothing in progress. Skills marked In Progress on the Goals tab show up here.</p>}
-            {learning.length > 6 && <p className="empty small">+{learning.length - 6} more on the Goals tab.</p>}
-          </Panel>
-
-          <Panel>
-            <PanelTitle eyebrow="04 / TRAINING" title="Education" action={addButton("Education", "Add")}/>
+            <PanelTitle eyebrow="03 / TRAINING" title="Education" action={addButton("Education", "Add")}/>
             {newEditor("Education")}
             {education.map((e) => item(e, (
               <>
@@ -248,7 +234,7 @@ export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => v
           </Panel>
 
           <Panel>
-            <PanelTitle eyebrow="05 / TOOLKIT" title="Skills" action={addButton("Skill", "Add group")}/>
+            <PanelTitle eyebrow="04 / TOOLKIT" title="Skills" action={addButton("Skill", "Add group")}/>
             {newEditor("Skill")}
             {of("Skill").map((s) => item(s, (
               <>
@@ -264,7 +250,7 @@ export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => v
           </Panel>
 
           <Panel>
-            <PanelTitle eyebrow="06 / PODIUMS" title="Hackathons & Awards" action={addButton("Award", "Add")}/>
+            <PanelTitle eyebrow="05 / PODIUMS" title="Hackathons & Awards" action={addButton("Award", "Add")}/>
             {newEditor("Award")}
             {awards.map((a) => item(a, (
               <div className="exp-award">
@@ -279,7 +265,7 @@ export default function Experience({ onNavigate }: { onNavigate: (tab: Tab) => v
           </Panel>
 
           <Panel>
-            <PanelTitle eyebrow="07 / OFF TRACK" title="Beyond Work" action={addButton("Beyond", "Add")}/>
+            <PanelTitle eyebrow="06 / OFF TRACK" title="Beyond Work" action={addButton("Beyond", "Add")}/>
             {newEditor("Beyond")}
             {of("Beyond").map((b) => item(b, (
               <>
