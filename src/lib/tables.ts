@@ -1,6 +1,7 @@
 import type { CalEvent, DailyTask, FocusLog, Goal, Note, QuickLink, Settings } from "./data";
 import type { Holding, PortfolioSettings, PricePoint, Snapshot } from "./portfolio";
-import { peekStored, setStored } from "./store";
+import { EXP_KEY, EXP_SECTIONS, defaultExperience, type ExpEntry } from "./experience";
+import { hasStored, peekStored, setStored } from "./store";
 import { pad, uid } from "./utils";
 import type { GoalRow, GoalStatus, MealRow, MedRow, ScheduleRow, TrackerCategory, TrackerLog } from "./vault";
 
@@ -125,6 +126,27 @@ const goalPlanTable = listTable<GoalRow>("data", "Goal Plan", "goals.table", [
   ["End Date", (g) => g.end ?? "", (s) => ({ end: s.trim() ? date(s) : "" })],
   ["Status", (g) => g.status, (s) => ({ status: statuses.find((x) => x.toLowerCase() === s.trim().toLowerCase()) ?? "Not Started" })],
 ]);
+
+// Months stay as "YYYY-MM" text; a month typed into Sheets as a date comes back as a serial number.
+const month = (s: string) => (isSerial(s) && Number(s) > 20000 ? date(s).slice(0, 7) : s.trim());
+const experienceList = listTable<ExpEntry>("data", "Experience", EXP_KEY, [
+  ["Section", (e) => e.section, (s) => ({ section: EXP_SECTIONS.find((x) => x.toLowerCase() === s.trim().toLowerCase()) ?? "Project" })],
+  ["Title", (e) => e.title, (s) => ({ title: s })],
+  ["Organisation", (e) => e.org, (s) => ({ org: s })],
+  ["Location", (e) => e.place, (s) => ({ place: s })],
+  ["Start", (e) => e.start, (s) => ({ start: month(s) })],
+  ["End", (e) => e.end, (s) => ({ end: month(s) })],
+  ["Tags", (e) => e.tags, (s) => ({ tags: s })],
+  ["Details", (e) => e.details, (s) => ({ details: s })],
+]);
+// Ships with the CV as its default. A brand-new empty tab must not wipe that before it is first uploaded.
+const experienceTable: Table = {
+  ...experienceList,
+  rows: () => (hasStored(EXP_KEY) ? experienceList.rows() : defaultExperience.map((e) => [e.id, e.section, e.title, e.org, e.place, e.start, e.end, e.tags, e.details])),
+  apply: (rows) => {
+    if (rows.length || hasStored(EXP_KEY)) experienceList.apply(rows);
+  },
+};
 
 const eventsTable = listTable<CalEvent>("data", "Calendar Events", "events", [
   ["Date", (e) => e.date, (s) => ({ date: date(s) })],
@@ -305,7 +327,7 @@ const pricesTable: Table = {
 
 // Order matters when applying: Holdings before Price History.
 export const TABLES: Table[] = [
-  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, eventsTable, holdingsTable, medsTable, scheduleTable, mealsTable, trackerTable,
+  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, experienceTable, eventsTable, holdingsTable, medsTable, scheduleTable, mealsTable, trackerTable,
   focusTable, wellnessTable, medLogTable, habitLogTable, mealLogTable, snapshotsTable, pricesTable,
 ];
 

@@ -2,7 +2,7 @@ import { useStored } from "./store";
 import type { ScheduleRow } from "./vault";
 import { addDays, dateKey, uid } from "./utils";
 
-export type Tab = "Overview" | "Focus" | "Goals" | "Investments" | "Advisor";
+export type Tab = "Overview" | "Focus" | "Goals" | "Experience" | "Investments" | "Advisor";
 
 // scheduleId marks a task fetched from the Daily Schedule; those reset each morning. Tasks without one stay until closed.
 // closedOn hides a schedule task for that day only; it comes back the next morning.

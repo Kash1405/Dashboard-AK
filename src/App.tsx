@@ -11,6 +11,7 @@ import { useStored } from "./lib/store";
 import { isOverdue, useGoalTable, useSchedule } from "./lib/vault";
 import { dateKey, formatDuration, pad, playChime, useNow } from "./lib/utils";
 import Advisor from "./tabs/Advisor";
+import Experience from "./tabs/Experience";
 import Focus from "./tabs/Focus";
 import Goals from "./tabs/Goals";
 import Investments from "./tabs/Investments";
@@ -20,6 +21,7 @@ const tabs: { tab: Tab; icon: string }[] = [
   { tab: "Overview", icon: "grid" },
   { tab: "Focus", icon: "focus" },
   { tab: "Goals", icon: "flag" },
+  { tab: "Experience", icon: "briefcase" },
   { tab: "Investments", icon: "chart" },
   { tab: "Advisor", icon: "heart" },
 ];
@@ -182,6 +184,7 @@ export default function App() {
       {active === "Overview" && <Overview onNavigate={setActive}/>}
       {active === "Focus" && <Focus/>}
       {active === "Goals" && <Goals/>}
+      {active === "Experience" && <Experience onNavigate={setActive}/>}
       {active === "Investments" && <Investments/>}
       {active === "Advisor" && <Advisor/>}
       <footer><span>KASH COMMAND · PRIVATE DASHBOARD</span><span>{driveOn ? "Source of truth: Google Drive › Personal Dashboard" : "Saved in this browser · connect Google Drive to sync"} <i/></span></footer>
