@@ -1,5 +1,6 @@
 import { useState } from "react";
 import ScheduleTable from "../components/ScheduleTable";
+import Sudoku from "../components/Sudoku";
 import { Icon, Panel, PanelTitle } from "../components/ui";
 import { isClosedToday, timerRemaining, useDailyTasks, useFocusDraft, useFocusFlash, useFocusLogs, useFocusTimer } from "../lib/data";
 import { useCompleteSession } from "../lib/focus";
@@ -135,6 +136,7 @@ export default function Focus() {
         </div>
       </Panel>
       <section className="focus-schedule"><ScheduleTable/></section>
+      <section className="focus-sudoku"><Sudoku/></section>
     </main>
   );
 }
