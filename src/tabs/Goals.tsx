@@ -12,6 +12,8 @@ export default function Goals() {
   const [rows, setRows] = useGoalTable();
   const [typeFilter, setTypeFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
+  // "only" focuses on the status, "hide" removes it; clicking a card cycles only → hide → all.
+  const [statusMode, setStatusMode] = useState<"only" | "hide">("only");
   const [query, setQuery] = useState("");
 
   const types = [...new Set(rows.map((row) => row.type).filter(Boolean))];
@@ -20,7 +22,7 @@ export default function Goals() {
   const q = query.trim().toLowerCase();
   const visible = rows.filter((row) =>
     (typeFilter === "All" || row.type === typeFilter) &&
-    (statusFilter === "All" || row.status === statusFilter) &&
+    (statusFilter === "All" || (statusMode === "only" ? row.status === statusFilter : row.status !== statusFilter)) &&
     (!q || [row.skill, row.description, row.comments, row.type].some((text) => text.toLowerCase().includes(q))),
   );
 
@@ -30,6 +32,11 @@ export default function Goals() {
     const kept = rows.filter((row) => !visible.some((v) => v.id === row.id) || nextById.has(row.id)).map((row) => nextById.get(row.id) ?? row);
     const added = next.filter((row) => !rows.some((r) => r.id === row.id));
     setRows([...kept, ...added]);
+  };
+  const clickStatusCard = (status: GoalStatus) => {
+    if (statusFilter !== status) { setStatusFilter(status); setStatusMode("only"); }
+    else if (statusMode === "only") setStatusMode("hide");
+    else setStatusFilter("All");
   };
   const cycleStatus = (row: GoalRow) => {
     const next = statuses[(statuses.indexOf(row.status) + 1) % statuses.length];
@@ -45,7 +52,7 @@ export default function Goals() {
       <div className="goal-stats">
         <div><span>Season progress</span><strong>{progress.toFixed(0)}%</strong><i><b style={{ width: `${progress}%` }}/></i></div>
         {statuses.map((status) => (
-          <button key={status} className={`goal-stat ${statusFilter === status ? "active" : ""}`} onClick={() => setStatusFilter(statusFilter === status ? "All" : status)}>
+          <button key={status} className={`goal-stat ${statusFilter === status ? (statusMode === "only" ? "active" : "excluded") : ""}`} onClick={() => clickStatusCard(status)} title={statusFilter !== status ? `Show only ${status}` : statusMode === "only" ? `Hide ${status}` : "Show all"}>
             <span>{status}</span><strong className={`tone-${statusClass(status)}`}>{counts[status]}</strong>
           </button>
         ))}
@@ -57,7 +64,7 @@ export default function Goals() {
         }/>
         <div className="filter-chips">
           {["All", ...types].map((type) => <button key={type} className={typeFilter === type ? "active" : ""} onClick={() => setTypeFilter(type)}>{type}</button>)}
-          {statusFilter !== "All" && <button className="active" onClick={() => setStatusFilter("All")}>{statusFilter} ×</button>}
+          {statusFilter !== "All" && <button className="active" onClick={() => setStatusFilter("All")}>{statusMode === "hide" ? `Not ${statusFilter}` : statusFilter} ×</button>}
         </div>
         <EditableTable<GoalRow>
           rows={visible}
@@ -68,7 +75,7 @@ export default function Goals() {
           empty="No items match. Add one below."
           newRow={() => {
             setQuery("");
-            return { id: uid(), type: typeFilter !== "All" ? typeFilter : "Hard Skill", skill: "", description: "", comments: "", start: dateKey(), end: "", status: statusFilter !== "All" ? (statusFilter as GoalStatus) : "Not Started" };
+            return { id: uid(), type: typeFilter !== "All" ? typeFilter : "Hard Skill", skill: "", description: "", comments: "", start: dateKey(), end: "", status: statusFilter === "All" ? "Not Started" : statusMode === "only" ? (statusFilter as GoalStatus) : statuses.find((s) => s !== statusFilter)! };
           }}
           columns={[
             { key: "type", label: "Type", width: "120px", suggestions: ["Soft Skill", "Hard Skill", "Hard Goal", ...types], render: (row) => <span className="type-tag">{row.type}</span> },

@@ -635,6 +635,8 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .goal-stat { cursor: pointer; color: inherit; }
 .goal-stat:hover { border-color: #3a3c42; }
 .goal-stat.active { border-color: var(--red); }
+.goal-stat.excluded { border-style: dashed; opacity: .45; }
+.goal-stat.excluded strong { text-decoration: line-through; }
 .tone-not-started { color: #bfc1c5; }
 .tone-in-progress { color: var(--amber); }
 .tone-done { color: var(--green); }
