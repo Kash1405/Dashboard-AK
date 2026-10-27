@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { googleClientId, isFresh, preloadGoogle, requestToken, revokeToken, type Token } from "./google";
 import { importLegacy } from "./legacySync";
+import { readLedger, requestLedgerRefresh, shouldReadLedger } from "./ledger";
 import { peekStored, setStored, subscribeAll, useStored } from "./store";
 import { TABLES, applyNotes, cellText, noteRows, notesHtml, parseNotes, type Cell, type FileRole, type Table } from "./tables";
 
@@ -17,7 +18,8 @@ import { TABLES, applyNotes, cellText, noteRows, notesHtml, parseNotes, type Cel
 // allow only during a click. So the token is kept for its full hour (across reloads), and when
 // it is missing or about to run out, the next click anywhere on the page quietly renews it.
 
-const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata";
+// spreadsheets.readonly lets the dashboard read the MAO Ledger, a sheet it did not create (see ledger.ts).
+const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/spreadsheets.readonly";
 const FILES_API = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
@@ -54,14 +56,17 @@ const setStatus = (patch: Partial<SyncStatus>) => setStored<SyncStatus>("~sync.s
 
 const SYNCED_KEYS = new Set([...TABLES.flatMap((t) => t.keys), "notes", "advisor.meds", "advisor.meals", "advisor.tracker"]);
 
-let token: Token | null = (() => {
-  const saved = peekStored<Token>("sync.token");
-  return isFresh(saved ?? null) ? saved! : null;
+// Tokens remember the scopes they were granted for, so one from before a scope was added gets renewed.
+type ScopedToken = Token & { scope?: string };
+let token: ScopedToken | null = (() => {
+  const saved = peekStored<ScopedToken>("sync.token");
+  return isFresh(saved ?? null) && saved!.scope === SCOPE ? saved! : null;
 })();
 let applying = false;
 let timer: number | undefined;
 let busy: Promise<void> | null = null;
 let generation = 0; // bumped on sign-out so in-flight work stops
+let forceConsent = false; // show Google's consent screen again (to grant a permission that was left unticked)
 
 export const folderUrl = (id: string) => `https://drive.google.com/drive/folders/${id}`;
 export const fileUrl = (role: Role, id: string) => (role === "notes" || role === "readme" ? `https://docs.google.com/document/d/${id}/edit` : `https://docs.google.com/spreadsheets/d/${id}/edit`);
@@ -265,7 +270,7 @@ function exclusive(task: () => Promise<void>) {
   return run;
 }
 
-function setToken(next: Token | null) {
+function setToken(next: ScopedToken | null) {
   token = next;
   setStored<Token | null>("sync.token", next);
 }
@@ -273,7 +278,9 @@ function setToken(next: Token | null) {
 async function ensureToken(interactive: boolean) {
   if (isFresh(token) && !(interactive && token!.expiresAt - Date.now() < RENEW_BEFORE_MS)) return;
   if (!interactive) throw new Error("Click anywhere on the page to reconnect Google Drive.");
-  setToken(await requestToken(SCOPE, meta().enabled ? "" : "consent"));
+  const prompt = meta().enabled && !forceConsent ? "" : "consent";
+  forceConsent = false;
+  setToken({ ...(await requestToken(SCOPE, prompt)), scope: SCOPE });
 }
 
 // Google's token popup is only allowed during a click, so the first click or key press after the
@@ -375,6 +382,9 @@ async function runSync(full: boolean) {
   }
   versions.notes = (await json<DriveFile>(`${FILES_API}/${notes.id}?fields=version`)).version;
 
+  // MAO Ledger: read on a full sync, when asked, or every 15 minutes. Its errors don't fail the sync.
+  if (gen === generation && shouldReadLedger(full)) await readLedger(json);
+
   if (gen !== generation) return;
   setMeta({ hashes, versions });
   setStatus({ state: timer === undefined ? "synced" : "pending", at: Date.now(), error: "" });
@@ -410,6 +420,17 @@ export function syncNow(interactive = false, full = true) {
 export function signIn() {
   setMeta({ enabled: true });
   return syncNow(true);
+}
+
+// From a click: reads the MAO Ledger now (Google may ask for permission to read it).
+export function refreshLedger(reconnect = false) {
+  requestLedgerRefresh();
+  if (reconnect) {
+    forceConsent = true;
+    setToken(null);
+  }
+  if (!meta().enabled) return signIn();
+  return syncNow(true, false);
 }
 
 export function signOut() {

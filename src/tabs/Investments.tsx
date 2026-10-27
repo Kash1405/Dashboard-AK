@@ -1,10 +1,12 @@
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { Icon, LineChart, Panel, PanelTitle, Sparkline } from "../components/ui";
 import { useStored } from "../lib/store";
 import {
   currencies, derive, fetchName, fetchQuote, pushHistory, refreshPortfolio, totals,
   useHoldings, useMarket, useMoney, usePortfolioSettings, useRefreshStatus, useSnapshots, type Holding,
 } from "../lib/portfolio";
+import { ledgerIdFrom, ledgerUrl, useLedgerData, useLedgerSettings, useLedgerStatus, type Briefing, type JimNote, type Valuation } from "../lib/ledger";
+import { refreshLedger, useSyncMeta } from "../lib/sync";
 import { addDays, dateKey, downloadFile, num, parseDateKey, pct, timeLabel, uid } from "../lib/utils";
 
 type Money = ReturnType<typeof useMoney>;
@@ -17,6 +19,11 @@ export default function Investments() {
   const [snapshots] = useSnapshots();
   const [status] = useRefreshStatus();
   const money = useMoney();
+  const [ledger, setLedger] = useLedgerSettings();
+  const [ledgerData] = useLedgerData();
+  const [ledgerStatus] = useLedgerStatus();
+  const [drive] = useSyncMeta();
+  const linked = ledger.enabled && !!ledger.id;
   const [editing, setEditing] = useState<Holding | "new" | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -43,13 +50,19 @@ export default function Investments() {
     downloadFile(`portfolio-${dateKey()}.csv`, [header.join(","), ...lines].join("\n"), "text/csv");
   };
 
-  const showConnect = !settings.apiKey && !settings.hideConnect;
+  const showConnect = !settings.apiKey && !settings.hideConnect && !linked;
+  const asOf = ledgerData?.asOf ? new Date(ledgerData.asOf) : null;
 
   return (
     <main className="page">
       <div className="welcome">
         <div><p className="eyebrow red">MARKET INTELLIGENCE</p><h1>Investment Control.</h1><p>Prices, positions, and intrinsic value in one view.</p></div>
         <div className="welcome-actions">
+          {linked && (
+            <button className="secondary-button" onClick={() => refreshLedger()} disabled={ledgerStatus.loading}>
+              <Icon name="refresh" size={14}/> {ledgerStatus.loading ? "Reading ledger…" : "Refresh from ledger"}
+            </button>
+          )}
           {settings.apiKey && (
             <button className="secondary-button" onClick={() => refreshPortfolio()} disabled={status.loading}>
               <Icon name="refresh" size={14}/> {status.loading ? "Refreshing…" : "Refresh prices"}
@@ -81,6 +94,37 @@ export default function Investments() {
         </Panel>
       )}
 
+      {showSettings && (
+        <Panel className="connect-panel">
+          <div>
+            <p className="eyebrow red">MAO LEDGER · GOOGLE SHEETS</p>
+            <h2>Automated equity ledger</h2>
+            <p>
+              Positions, prices, portfolio history, intrinsic values and the morning briefing are read from the MAO Ledger in your Automated Equity Valuation folder
+              whenever Google Drive syncs (at most every 15 minutes, or when you press “Refresh from ledger”). Edits made here are replaced on the next read.
+            </p>
+          </div>
+          <div className="connect-form">
+            <label className="wide">Ledger link<input value={ledger.id} onChange={(event) => setLedger({ ...ledger, id: ledgerIdFrom(event.target.value) })} placeholder="Paste the MAO Ledger link" autoComplete="off"/></label>
+            <div className="connect-buttons">
+              <button className="primary-button" onClick={() => { setLedger({ ...ledger, enabled: true }); refreshLedger(); }} disabled={!ledger.id}>{drive.enabled ? "Read ledger now" : "Connect Google & read"}</button>
+              {linked && <button className="secondary-button" onClick={() => setLedger({ ...ledger, enabled: false })}>Unlink</button>}
+              {ledger.id && <a className="text-button" href={ledgerUrl(ledger.id)} target="_blank" rel="noreferrer">Open ledger</a>}
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {linked && (
+        <p className={`status-line ${ledgerStatus.error ? "error" : ""}`}>
+          {ledgerStatus.error
+            ? <>{ledgerStatus.error} <button className="text-button" onClick={() => refreshLedger(true)}>Reconnect Google</button></>
+            : !drive.enabled ? <>Linked to the MAO Ledger. <button className="text-button" onClick={() => refreshLedger()}>Connect Google Drive</button> to load it.</>
+            : asOf ? `From the MAO Ledger · positions as of ${asOf.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${timeLabel(asOf)}${ledgerStatus.at ? ` · checked ${timeLabel(new Date(ledgerStatus.at))}` : ""}`
+            : "Linked to the MAO Ledger. It loads on the next Drive sync."}
+        </p>
+      )}
+
       {(status.error || status.at > 0) && settings.apiKey && (
         <p className={`status-line ${status.error ? "error" : ""}`}>
           {status.error || `Live prices updated ${timeLabel(new Date(status.at))}`}
@@ -96,14 +140,15 @@ export default function Investments() {
       )}
 
       {editing && (
-        <PositionEditor key={editing === "new" ? "new" : editing.id} initial={editing === "new" ? null : editing} apiKey={settings.apiKey} onSave={saveHolding} onCancel={() => setEditing(null)}/>
+        <PositionEditor key={editing === "new" ? "new" : editing.id} initial={editing === "new" ? null : editing} apiKey={settings.apiKey} linked={linked} onSave={saveHolding} onCancel={() => setEditing(null)}/>
       )}
 
-      <div className="summary-strip">
+      <div className={`summary-strip ${ledgerData && linked ? "six" : ""}`}>
         <div><span>Portfolio value</span><strong>{money(t.value)}</strong></div>
         <div><span>Today</span><strong className={t.dayChange >= 0 ? "up" : "down"}>{money(t.dayChange, { signed: true })}</strong><em className={t.dayChange >= 0 ? "up" : "down"}>{pct(t.dayPct)}</em></div>
         <div><span>Total P/L</span><strong className={t.pl >= 0 ? "up" : "down"}>{money(t.pl, { signed: true })}</strong><em className={t.pl >= 0 ? "up" : "down"}>{pct(t.plPct)}</em></div>
         <div><span>Invested</span><strong>{money(t.cost)}</strong></div>
+        {ledgerData && linked && <div><span>Cash · NAV</span><strong>{money(ledgerData.cash, { digits: 0 })}</strong><em>NAV {money(ledgerData.nav || t.value + ledgerData.cash, { digits: 0 })}</em></div>}
         <div><span>Vs. intrinsic value</span><strong className={t.marginOfSafety === null ? "" : t.marginOfSafety >= 0 ? "up" : "down"}>{t.marginOfSafety === null ? "—" : pct(t.marginOfSafety, 1)}</strong><em>{t.marginOfSafety === null ? "add estimates" : t.marginOfSafety >= 0 ? "upside" : "downside"}</em></div>
       </div>
 
@@ -125,6 +170,8 @@ export default function Investments() {
         </Panel>
         <ValuationRadar rows={rows} marginOfSafety={t.marginOfSafety}/>
       </div>
+
+      {linked && ledgerData?.briefing && <BriefingPanel briefing={ledgerData.briefing}/>}
 
       <Panel className="holdings-panel">
         <PanelTitle eyebrow="HOLDINGS" title="Intrinsic Value Monitor" action={<button className="text-button" onClick={exportCsv} disabled={!holdings.length}><Icon name="download" size={14}/> Export CSV</button>}/>
@@ -160,7 +207,8 @@ export default function Investments() {
 
       {selected && (
         <div className="detail-grid">
-          <StockDetail holding={selected.holding} weight={t.value ? (selected.d.value / t.value) * 100 : 0} money={money} onEdit={() => setEditing(selected.holding)}/>
+          <StockDetail holding={selected.holding} weight={t.value ? (selected.d.value / t.value) * 100 : 0} money={money} onEdit={() => setEditing(selected.holding)}
+            valuation={linked ? ledgerData?.valuations[selected.holding.symbol] : undefined} note={linked ? ledgerData?.notes[selected.holding.symbol] : undefined} sector={linked ? ledgerData?.sectors[selected.holding.symbol] : undefined}/>
           <IntrinsicCalculator holding={selected.holding} money={money} onApply={(value) => saveHolding({ ...selected.holding, intrinsic: Math.round(value * 100) / 100 })}/>
         </div>
       )}
@@ -196,7 +244,7 @@ function ValuationRadar({ rows, marginOfSafety }: { rows: { holding: Holding; d:
 
 type Draft = { symbol: string; name: string; shares: string; avgCost: string; price: string; prevClose: string; intrinsic: string };
 
-function PositionEditor({ initial, apiKey, onSave, onCancel }: { initial: Holding | null; apiKey: string; onSave: (h: Holding) => void; onCancel: () => void }) {
+function PositionEditor({ initial, apiKey, linked, onSave, onCancel }: { initial: Holding | null; apiKey: string; linked: boolean; onSave: (h: Holding) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState<Draft>(() => ({
     symbol: initial?.symbol ?? "",
     name: initial?.name ?? "",
@@ -260,12 +308,12 @@ function PositionEditor({ initial, apiKey, onSave, onCancel }: { initial: Holdin
           <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
         </div>
       </form>
-      {message && <p className="editor-message">{message}</p>}
+      {(message || linked) && <p className="editor-message">{message || "Positions come from the MAO Ledger, so this change lasts until the next ledger read. Make lasting changes in the ledger."}</p>}
     </Panel>
   );
 }
 
-function StockDetail({ holding, weight, money, onEdit }: { holding: Holding; weight: number; money: Money; onEdit: () => void }) {
+function StockDetail({ holding, weight, money, onEdit, valuation, note, sector }: { holding: Holding; weight: number; money: Money; onEdit: () => void; valuation?: Valuation; note?: JimNote; sector?: string }) {
   const d = derive(holding);
   const marks = [
     { label: "Avg cost", value: holding.avgCost, cls: "cost" },
@@ -279,7 +327,7 @@ function StockDetail({ holding, weight, money, onEdit }: { holding: Holding; wei
 
   return (
     <Panel className="stock-detail">
-      <PanelTitle eyebrow={holding.name.toUpperCase()} title={<>{holding.symbol} <span className="detail-price">{money(holding.price)}</span> <em className={d.dayPct >= 0 ? "up" : "down"}>{holding.prevClose ? pct(d.dayPct) : ""}</em></>}
+      <PanelTitle eyebrow={sector ? `${holding.name} · ${sector}`.toUpperCase() : holding.name.toUpperCase()} title={<>{holding.symbol} <span className="detail-price">{money(holding.price)}</span> <em className={d.dayPct >= 0 ? "up" : "down"}>{holding.prevClose ? pct(d.dayPct) : ""}</em></>}
         action={<button className="text-button" onClick={onEdit}><Icon name="edit" size={14}/> Edit</button>}/>
       <div className="detail-chart">
         {history.length > 1 ? <Sparkline values={history} tall/> : <p className="chart-note">Price history fills in each day the price is refreshed or edited.</p>}
@@ -296,8 +344,50 @@ function StockDetail({ holding, weight, money, onEdit }: { holding: Holding; wei
         <div><span>Weight</span><strong>{weight.toFixed(1)}%</strong></div>
         <div><span>Total P/L</span><strong className={d.pl >= 0 ? "up" : "down"}>{money(d.pl, { signed: true })}</strong></div>
         <div><span>Margin of safety</span><strong className={d.upside === null ? "" : d.upside >= 0 ? "up" : "down"}>{d.upside === null ? "—" : pct(d.upside, 1)}</strong></div>
+        {valuation && <div><span>Ledger verdict</span><strong>{valuation.verdict || "—"}</strong></div>}
+        {valuation && <div><span>Moat</span><strong>{valuation.moat || "—"}{valuation.moatScore ? <small> {valuation.moatScore.toFixed(0)}/100</small> : null}</strong></div>}
         <div><span>Last live update</span><strong>{holding.updatedAt ? `${new Date(holding.updatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${timeLabel(new Date(holding.updatedAt))}` : "Manual"}</strong></div>
       </div>
+      {note && (note.note || note.action) && (
+        <div className="ledger-note">
+          <span>Analyst note · {note.d}{note.action ? ` · ${note.action}` : ""}{note.score ? ` · score ${note.score}` : ""}</span>
+          {note.note && <p>{note.note}</p>}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// The ledger writes briefings as Markdown (with the odd HTML tag); render headings, bullets and bold.
+function BriefingPanel({ briefing }: { briefing: Briefing }) {
+  const [open, setOpen] = useStored("ledger.briefingOpen", false);
+  const lines = briefing.body.replace(/<[^>]*>/g, "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("# "));
+  const bold = (text: string) => text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
+  const blocks: ReactNode[] = [];
+  let list: string[] = [];
+  const flush = () => {
+    if (list.length) blocks.push(<ul key={blocks.length}>{list.map((item, i) => <li key={i}>{bold(item)}</li>)}</ul>);
+    list = [];
+  };
+  for (const line of lines) {
+    if (/^[-*] /.test(line)) { list.push(line.slice(2)); continue; }
+    flush();
+    if (line.startsWith("#")) blocks.push(<h3 key={blocks.length}>{line.replace(/^#+\s*/, "")}</h3>);
+    else if (!/^\*\*.*\*\*$/.test(line) || line.replace(/\*/g, "") !== briefing.headline) blocks.push(<p key={blocks.length}>{bold(line)}</p>);
+  }
+  flush();
+  const generated = briefing.generatedAt ? new Date(briefing.generatedAt) : null;
+  return (
+    <Panel className="briefing-panel">
+      <PanelTitle eyebrow={`MORNING BRIEFING · ${parseDateKey(briefing.d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}${generated && !isNaN(+generated) ? ` · ${timeLabel(generated)}` : ""}`}
+        title={briefing.headline || "Daily report"}
+        action={briefing.link ? <a className="text-button" href={briefing.link} target="_blank" rel="noreferrer"><Icon name="external" size={14}/> Open doc</a> : undefined}/>
+      <div className="briefing-movers">
+        {briefing.winners && <div><span>Winners</span><p className="up">{briefing.winners}</p></div>}
+        {briefing.losers && <div><span>Losers</span><p className="down">{briefing.losers}</p></div>}
+      </div>
+      {open && <div className="briefing-body">{blocks}</div>}
+      <button className="text-button" onClick={() => setOpen(!open)}>{open ? "Hide full briefing" : "Read full briefing"}</button>
     </Panel>
   );
 }
