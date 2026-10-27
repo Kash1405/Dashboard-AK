@@ -19,7 +19,8 @@ import { TABLES, applyNotes, cellText, noteRows, notesHtml, parseNotes, type Cel
 // it is missing or about to run out, the next click anywhere on the page quietly renews it.
 
 // spreadsheets.readonly lets the dashboard read the MAO Ledger, a sheet it did not create (see ledger.ts).
-const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/spreadsheets.readonly";
+// spreadsheets (not .readonly): the Investments tab edits holdings and queues requests in the MAO Ledger.
+const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/spreadsheets";
 const FILES_API = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
@@ -116,6 +117,11 @@ async function api(url: string, init: RequestInit = {}, gen = generation) {
   return response;
 }
 const json = async <T,>(url: string, init: RequestInit = {}) => (await api(url, init)).json() as Promise<T>;
+// Authorised Google request for other modules (the MAO Ledger writes). Needs Drive sync connected.
+export async function googleJson<T>(url: string, init: RequestInit = {}) {
+  if (!token) throw new Error("Connect Google first (Drive sync is off or signed out).");
+  return json<T>(url, init);
+}
 const post = (body: unknown) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 type DriveFile = { id: string; name: string; mimeType: string; version: string; trashed?: boolean; appProperties?: { kash?: string } };

@@ -10,7 +10,9 @@ import { uid } from "./utils";
 
 export const DEFAULT_LEDGER_ID = "1BCoX9__l-B67bXgk2OgBExZ8rd3-ueI8oftDGUGoE64";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
-const TABS = ["Positions", "Daily Prices", "Portfolio History", "Valuations", "Briefings", "Jim Notes", "Dashboard Feed"] as const;
+const BASE_TABS = ["Positions", "Daily Prices", "Portfolio History", "Valuations", "Briefings", "Jim Notes", "Holdings", "Cash"] as const;
+// Newer tabs; an older ledger without them fails the whole batch, so they're read only when present.
+const TABS = [...BASE_TABS, "Dashboard Feed", "Requests"] as const;
 const REFRESH_MS = 15 * 60 * 1000;
 
 export type LedgerSettings = { id: string; enabled: boolean };
@@ -35,10 +37,18 @@ export type FeedSummary = {
 };
 export type FeedResearch = Record<string, any>;
 export type Feed = { updated: string; summary: FeedSummary | null; research: Record<string, FeedResearch> };
+// The ledger's own input tabs, edited from the Holdings view.
+export type HoldingInput = { Ticker: string; Name: string; Shares: number | string; "Avg Cost": number | string; Currency: string; Sector: string; Opened: string; Notes: string };
+export type CashInput = { Account: string; Currency: string; Amount: number | string };
+export type LedgerRequest = { at: string; type: string; ticker: string; status: string; detail: string };
+export const HOLDING_COLUMNS = ["Ticker", "Name", "Shares", "Avg Cost", "Currency", "Sector", "Opened", "Notes"] as const;
+export const CASH_COLUMNS = ["Account", "Currency", "Amount"] as const;
 export type LedgerData = {
   asOf: string;
   history?: NavPoint[];
   feed?: Feed;
+  inputs?: { holdings: HoldingInput[]; cash: CashInput[] };
+  requests?: LedgerRequest[];
   cash: number;
   nav: number;
   sectors: Record<string, string>;
@@ -105,11 +115,11 @@ export async function readLedger(fetchJson: <T>(url: string) => Promise<T>) {
     );
     // A ledger from before the feed existed has no "Dashboard Feed" tab, which fails the whole batch.
     const { valueRanges } = await get(TABS).catch((error) => {
-      if ((error as { status?: number }).status === 400) return get(TABS.slice(0, -1));
+      if ((error as { status?: number }).status === 400) return get(BASE_TABS);
       throw error;
     });
-    const [positions, prices, history, valuations, briefings, jim, feed = []] = valueRanges.map((r) => objects(r.values));
-    applyLedger({ positions, prices, history, valuations, briefings, jim, feed });
+    const [positions, prices, history, valuations, briefings, jim, holdingsTab, cashTab, feed = [], requests = []] = valueRanges.map((r) => objects(r.values));
+    applyLedger({ positions, prices, history, valuations, briefings, jim, feed, holdingsTab, cashTab, requests });
     setStored<LedgerStatus>("~ledger.status", { loading: false, error: "", at: Date.now() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not read the MAO Ledger.";
@@ -122,7 +132,7 @@ export async function readLedger(fetchJson: <T>(url: string) => Promise<T>) {
   }
 }
 
-function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuations" | "briefings" | "jim" | "feed", Row[]>) {
+function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuations" | "briefings" | "jim" | "feed" | "holdingsTab" | "cashTab" | "requests", Row[]>) {
   // Price history per ticker from Daily Prices.
   const closes = new Map<string, PricePoint[]>();
   for (const r of tabs.prices) {
@@ -220,6 +230,12 @@ function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuatio
       cash: round(numOr(r["cash usd"]), 2), dayPnl: round(numOr(r["day p&l usd"]), 2),
     })),
     feed: feed.summary || Object.keys(feed.research).length ? feed : previous?.feed,
+    // objects() lower-cases headers; map back to the ledger's column names for editing.
+    inputs: {
+      holdings: tabs.holdingsTab.map((r) => Object.fromEntries(HOLDING_COLUMNS.map((c) => [c, r[c.toLowerCase()] ?? ""])) as HoldingInput),
+      cash: tabs.cashTab.map((r) => Object.fromEntries(CASH_COLUMNS.map((c) => [c, r[c.toLowerCase()] ?? ""])) as CashInput),
+    },
+    requests: tabs.requests.slice(-30).map((r) => ({ at: str(r.timestamp), type: str(r.type), ticker: str(r.ticker).toUpperCase(), status: str(r.status), detail: str(r.detail) })),
     cash: last ? numOr(last["cash usd"]) : 0,
     nav: last ? numOr(last["nav usd"]) : 0,
     sectors,
@@ -227,4 +243,90 @@ function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuatio
     notes,
     briefing,
   });
+}
+
+// ---------- Writes (holdings edits and research requests) ----------
+
+type Fetcher = <T>(url: string, init?: RequestInit) => Promise<T>;
+const sendJson = (method: string, body: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const ledgerId = () => getStored("ledger.settings", settingsFallback).id;
+const range = (tab: string, a1 = "") => encodeURIComponent(`'${tab}'${a1 ? `!${a1}` : ""}`);
+
+async function ensureTab(fetchJson: Fetcher, tab: string) {
+  const meta = await fetchJson<{ sheets: { properties: { title: string } }[] }>(`${SHEETS_API}/${ledgerId()}?fields=sheets.properties.title`);
+  if (!meta.sheets.some((s) => s.properties.title === tab)) {
+    await fetchJson(`${SHEETS_API}/${ledgerId()}:batchUpdate`, sendJson("POST", { requests: [{ addSheet: { properties: { title: tab } } }] }));
+  }
+}
+
+// Replaces the Holdings and Cash tabs. Numbers stay numbers; text is written RAW so "0700.HK" isn't reinterpreted.
+export async function saveLedgerInputs(fetchJson: Fetcher, holdings: HoldingInput[], cash: CashInput[]) {
+  const cell = (v: unknown) => (typeof v === "number" ? v : String(v ?? "").trim());
+  const num = (v: unknown) => (str(v) === "" ? "" : numOr(v));
+  const holdingRows = holdings.map((h) => [str(h.Ticker).toUpperCase(), cell(h.Name), num(h.Shares), num(h["Avg Cost"]), str(h.Currency || "USD").toUpperCase(), cell(h.Sector), day(h.Opened) || str(h.Opened), cell(h.Notes)]);
+  const cashRows = cash.map((c) => [cell(c.Account), str(c.Currency || "USD").toUpperCase(), numOr(c.Amount)]);
+  await fetchJson(`${SHEETS_API}/${ledgerId()}/values:batchClear`, sendJson("POST", { ranges: ["'Holdings'!A2:Z", "'Cash'!A2:Z"] }));
+  await fetchJson(`${SHEETS_API}/${ledgerId()}/values:batchUpdate`, sendJson("POST", {
+    valueInputOption: "RAW",
+    data: [
+      { range: "'Holdings'!A1", values: [[...HOLDING_COLUMNS], ...holdingRows] },
+      { range: "'Cash'!A1", values: [[...CASH_COLUMNS], ...cashRows] },
+    ],
+  }));
+  setStored<LedgerData | null>("ledger.data", (d) => (d ? { ...d, inputs: { holdings, cash } } : d), null);
+}
+
+// Adds a row to the Requests tab; GitHub Actions (or the local MAO server) picks it up.
+export async function queueRequest(fetchJson: Fetcher, type: "refresh" | "research" | "briefing", ticker = "") {
+  await ensureTab(fetchJson, "Requests");
+  const at = new Date().toISOString();
+  const row = [at, type, ticker.toUpperCase(), "pending", ""];
+  const existing = await fetchJson<{ values?: unknown[][] }>(`${SHEETS_API}/${ledgerId()}/values/${range("Requests", "A1:E1")}`);
+  if (!existing.values?.length) {
+    await fetchJson(`${SHEETS_API}/${ledgerId()}/values/${range("Requests", "A1")}?valueInputOption=RAW`, sendJson("PUT", { values: [["Timestamp", "Type", "Ticker", "Status", "Detail"]] }));
+  }
+  await fetchJson(`${SHEETS_API}/${ledgerId()}/values/${range("Requests", "A1")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, sendJson("POST", { values: [row] }));
+  const request: LedgerRequest = { at, type, ticker: ticker.toUpperCase(), status: "pending", detail: "" };
+  setStored<LedgerData | null>("ledger.data", (d) => (d ? { ...d, requests: [...(d.requests ?? []), request] } : d), null);
+  return request;
+}
+
+// Yahoo-style tickers (what MAO uses) to Google Finance symbols.
+export function googleSymbol(ticker: string) {
+  const t = ticker.trim().toUpperCase();
+  const [base, suffix] = t.includes(".") ? [t.slice(0, t.lastIndexOf(".")), t.slice(t.lastIndexOf(".") + 1)] : [t, ""];
+  const exchanges: Record<string, string> = { HK: "HKG", L: "LON", T: "TYO", TO: "TSE", AX: "ASX", SS: "SHA", SZ: "SHE", NS: "NSE", BO: "BOM", SI: "SGX", DE: "ETR", PA: "EPA", AS: "AMS" };
+  if (suffix && exchanges[suffix]) return `${exchanges[suffix]}:${suffix === "HK" ? base.padStart(4, "0") : base}`;
+  return t.replace(/-/g, ".");
+}
+
+export type QuickQuote = {
+  ticker: string; name: string; price: number | null; changePct: number | null; currency: string; marketCap: number | null;
+  pe: number | null; eps: number | null; high52: number | null; low52: number | null; volume: number | null; at: number;
+};
+const QUOTE_FIELDS = ["name", "price", "changepct", "currency", "marketcap", "pe", "eps", "high52", "low52", "volume"] as const;
+
+// An instant quote without any server: GOOGLEFINANCE formulas in a "Lookup" tab, recalculated by Google.
+export async function quickQuote(fetchJson: Fetcher, ticker: string): Promise<QuickQuote | null> {
+  await ensureTab(fetchJson, "Lookup");
+  const symbol = googleSymbol(ticker).replace(/"/g, "");
+  await fetchJson(`${SHEETS_API}/${ledgerId()}/values/${range("Lookup", "A1")}?valueInputOption=USER_ENTERED`, sendJson("PUT", {
+    values: [["Symbol", ...QUOTE_FIELDS], [symbol, ...QUOTE_FIELDS.map((f) => `=IFERROR(GOOGLEFINANCE($A$2,"${f}"),"")`)]],
+  }));
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { values } = await fetchJson<{ values?: unknown[][] }>(`${SHEETS_API}/${ledgerId()}/values/${range("Lookup", "A2:K2")}?valueRenderOption=UNFORMATTED_VALUE`);
+    const row = values?.[0] ?? [];
+    const loading = row.some((v) => /loading/i.test(str(v)));
+    if (!loading && row.length > 1) {
+      const get = (f: (typeof QUOTE_FIELDS)[number]) => row[1 + QUOTE_FIELDS.indexOf(f)];
+      const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      if (n(get("price")) === null) return null;
+      return {
+        ticker: ticker.toUpperCase(), name: str(get("name")) || ticker.toUpperCase(), price: n(get("price")), changePct: n(get("changepct")), currency: str(get("currency")),
+        marketCap: n(get("marketcap")), pe: n(get("pe")), eps: n(get("eps")), high52: n(get("high52")), low52: n(get("low52")), volume: n(get("volume")), at: Date.now(),
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  return null;
 }

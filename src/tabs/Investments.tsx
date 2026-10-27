@@ -1,17 +1,19 @@
-import { useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { Icon, Panel, PanelTitle, Sparkline } from "../components/ui";
 import { useStored } from "../lib/store";
 import { useMoney } from "../lib/portfolio";
 import {
-  ledgerIdFrom, ledgerUrl, useLedgerData, useLedgerSettings, useLedgerStatus,
-  type Briefing, type FeedPosition, type FeedResearch, type FeedSummary, type JimNote, type NavPoint,
+  HOLDING_COLUMNS, ledgerIdFrom, ledgerUrl, queueRequest, quickQuote, saveLedgerInputs, useLedgerData, useLedgerSettings, useLedgerStatus,
+  type Briefing, type CashInput, type FeedPosition, type FeedResearch, type FeedSummary, type HoldingInput, type JimNote, type LedgerRequest, type NavPoint, type QuickQuote,
 } from "../lib/ledger";
-import { refreshLedger, useSyncMeta } from "../lib/sync";
+import { runnerMessage, startRequests, useGithubSettings } from "../lib/maoJobs";
+import { googleJson, refreshLedger, useSyncMeta } from "../lib/sync";
 import { dateKey, downloadFile, parseDateKey, pct, timeLabel } from "../lib/utils";
 
 // The Investments tab shows the MAO equity research system. Everything comes from the MAO Ledger
-// sheet: the 6 AM scheduled run refreshes prices, NAV history and the "Dashboard Feed" (research
-// per holding), and the 08:50 run writes the morning briefing. The page itself only reads.
+// sheet: the 6 AM scheduled run (GitHub Actions) refreshes prices, NAV history and the "Dashboard
+// Feed" (research per holding), and the 08:50 run writes the morning briefing. The page writes only
+// the ledger's Holdings and Cash tabs and its Requests queue (see lib/maoJobs.ts).
 
 type Money = ReturnType<typeof useMoney>;
 type View = "Summary" | "Holdings" | "Research";
@@ -20,7 +22,6 @@ const views: { view: View; icon: string; blurb: string }[] = [
   { view: "Holdings", icon: "briefcase", blurb: "Positions, P&L and sizing" },
   { view: "Research", icon: "bulb", blurb: "Valuation, moat, sentiment and charts" },
 ];
-const MAO_SERVER = "http://127.0.0.1:8765";
 const FOLDER_URL = "https://drive.google.com/drive/folders/18allYWNhv9ehaFGu2GIG8xliteo7DXzo";
 
 const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -38,31 +39,31 @@ export default function Investments() {
   const [status] = useLedgerStatus();
   const [drive] = useSyncMeta();
   const [showSettings, setShowSettings] = useState(false);
-  const [job, setJob] = useState<{ name: string; message: string; error?: boolean } | null>(null);
+  const [job, setJob] = useState<{ message: string; error?: boolean } | null>(null);
   const money = useMoney();
   const linked = ledger.enabled && !!ledger.id;
   const summary = data?.feed?.summary ?? null;
   const active: View = views.some((v) => v.view === view) ? view : "Summary";
-  const busy = !!job && !job.error;
+  const pending = openRequests(data?.requests);
 
-  // Jobs run on the MAO server on this Mac; the result lands in the ledger, which is then re-read.
-  const runJob = async (name: "briefing" | "update") => {
-    setJob({ name, message: name === "briefing" ? "Generating the briefing…" : "Updating prices and research (about a minute)…" });
+  // While anything is queued, re-read the ledger every 30 seconds so results appear by themselves.
+  useEffect(() => {
+    if (!pending.length) return;
+    const timer = window.setInterval(() => refreshLedger(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [pending.length]);
+  useEffect(() => {
+    if (!pending.length) setJob((j) => (j && !j.error ? null : j));
+  }, [pending.length]);
+
+  // Queue work in the ledger, then start whatever can run it (GitHub Actions, the local server, or the next schedule).
+  const request = async (type: "refresh" | "research" | "briefing", ticker: string, what: string) => {
+    setJob({ message: "Adding the request to the ledger…" });
     try {
-      for (const step of name === "briefing" ? ["briefing"] : ["midnight", "feed"]) {
-        const response = await fetch(`${MAO_SERVER}/api/jobs/${step}`, { method: "POST" });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.detail || `The ${step} job failed (${response.status}).`);
-      }
-      setJob(null);
-      refreshLedger(); // re-read in the background; the status line shows progress
+      await queueRequest(googleJson, type, ticker);
+      setJob({ message: runnerMessage(await startRequests(), what) });
     } catch (error) {
-      setJob({
-        name, error: true,
-        message: error instanceof TypeError
-          ? "The MAO server isn't running on this Mac, so this can't run from here. Start it from the MAO folder (.venv/bin/python -m uvicorn mao.server:app --port 8765), or wait for the scheduled run."
-          : error instanceof Error ? error.message : "The job failed.",
-      });
+      setJob({ error: true, message: error instanceof Error ? error.message : "Couldn't queue the request." });
     }
   };
 
@@ -80,9 +81,9 @@ export default function Investments() {
           <button className="secondary-button" onClick={() => refreshLedger()} disabled={status.loading}>
             <Icon name="refresh" size={14}/> {status.loading ? "Reading ledger…" : "Refresh"}
           </button>
-          <button className="secondary-button" onClick={() => runJob("update")} disabled={busy}><Icon name="bolt" size={14}/> Update now</button>
-          <button className="primary-button" onClick={() => runJob("briefing")} disabled={busy}><Icon name="play" size={14}/> Generate briefing</button>
-          <button className="icon-button" onClick={() => setShowSettings(!showSettings)} aria-label="Ledger settings" title="Ledger settings"><Icon name="key" size={15}/></button>
+          <button className="secondary-button" onClick={() => request("refresh", "", "Update requested.")} disabled={!drive.enabled}><Icon name="bolt" size={14}/> Update now</button>
+          <button className="primary-button" onClick={() => request("briefing", "", "Briefing requested.")} disabled={!drive.enabled}><Icon name="play" size={14}/> Generate briefing</button>
+          <button className="icon-button" onClick={() => setShowSettings(!showSettings)} aria-label="Investment settings" title="Investment settings"><Icon name="key" size={15}/></button>
         </div>
       </div>
 
@@ -93,6 +94,7 @@ export default function Investments() {
           : status.error ? <>{status.error} <button className="text-button" onClick={() => refreshLedger(true)}>Reconnect Google</button></>
           : !linked ? <>The MAO Ledger isn't linked. <button className="text-button" onClick={() => setShowSettings(true)}>Link it</button></>
           : !drive.enabled ? <>Connect Google to load the MAO Ledger. <button className="text-button" onClick={() => refreshLedger()}>Connect Google</button></>
+          : pending.length ? `${pending.length} request${pending.length > 1 ? "s" : ""} waiting to run (${pending.map((r) => r.ticker || r.type).join(", ")}). Checking every 30 seconds.`
           : updated ? `Research updated ${updated.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} ${timeLabel(updated)}${status.at ? ` · ledger read ${timeLabel(new Date(status.at))}` : ""}`
           : "The ledger has no research feed yet. It appears after the next 06:00 run, or press Update now."}
       </p>
@@ -112,19 +114,27 @@ export default function Investments() {
         </Panel>
       ) : active === "Summary" ? (
         <SummaryView summary={summary} history={data?.history ?? []} briefing={data?.briefing ?? null} portfolioNote={data?.notes._PORTFOLIO} money={money}
-          onGenerate={() => runJob("briefing")} busy={busy}/>
+          onGenerate={() => request("briefing", "", "Briefing requested.")} busy={!drive.enabled}/>
       ) : active === "Holdings" ? (
-        <HoldingsView summary={summary} research={data?.feed?.research ?? {}} money={money}/>
+        <HoldingsView summary={summary} research={data?.feed?.research ?? {}} inputs={data?.inputs} money={money}
+          onSaved={() => request("refresh", "", "Holdings saved.")}/>
       ) : (
-        <ResearchView summary={summary} research={data?.feed?.research ?? {}} notes={data?.notes ?? {}} money={money}/>
+        <ResearchView summary={summary} research={data?.feed?.research ?? {}} notes={data?.notes ?? {}} requests={data?.requests ?? []} money={money}
+          onResearch={(ticker) => request("research", ticker, `${ticker} research requested.`)}/>
       )}
     </main>
   );
 }
 
+// Requests still waiting, ignoring any abandoned for more than a day.
+const openRequests = (requests: LedgerRequest[] = []) =>
+  requests.filter((r) => (r.status || "pending").toLowerCase() === "pending" && Date.now() - +new Date(r.at || 0) < 864e5);
+
 function LedgerSettings({ onClose }: { onClose: () => void }) {
   const [ledger, setLedger] = useLedgerSettings();
+  const [github, setGithub] = useGithubSettings();
   return (
+    <>
     <Panel className="connect-panel">
       <div>
         <p className="eyebrow red">MAO LEDGER · GOOGLE SHEETS</p>
@@ -143,6 +153,26 @@ function LedgerSettings({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </Panel>
+    <Panel className="connect-panel">
+      <div>
+        <p className="eyebrow red">GITHUB ACTIONS · OPTIONAL</p>
+        <h2>Run requests right away</h2>
+        <p>
+          Holdings edits, stock searches and briefings are queued in the ledger and run by GitHub Actions at 06:00 and 08:50.
+          To run them within a minute or two instead, paste a fine-grained GitHub token limited to the <b>{github.repo}</b> repository
+          with only <b>Actions: read and write</b> permission. It's stored in this browser only; add it on each device you use.
+        </p>
+      </div>
+      <div className="connect-form">
+        <label className="wide">GitHub token<input type="password" value={github.token} onChange={(event) => setGithub({ ...github, token: event.target.value.trim() })} placeholder="github_pat_…" autoComplete="off"/></label>
+        <div className="connect-buttons">
+          <a className="text-button" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create a token</a>
+          {github.token && <button className="secondary-button" onClick={() => setGithub({ ...github, token: "" })}>Remove token</button>}
+          <button className="secondary-button" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </Panel>
+    </>
   );
 }
 
@@ -308,7 +338,10 @@ function BriefingPanel({ briefing, onGenerate, busy }: { briefing: Briefing | nu
 
 /* ---------------------------------------------------------------- Holdings */
 
-function HoldingsView({ summary, research, money }: { summary: FeedSummary; research: Record<string, FeedResearch>; money: Money }) {
+function HoldingsView({ summary, research, inputs, money, onSaved }: {
+  summary: FeedSummary; research: Record<string, FeedResearch>; inputs?: { holdings: HoldingInput[]; cash: CashInput[] }; money: Money; onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useStored<string>("investments.holding", "");
   const positions = summary.positions;
   const current = positions.find((p) => p.Ticker === selected) ?? positions[0];
@@ -323,7 +356,13 @@ function HoldingsView({ summary, research, money }: { summary: FeedSummary; rese
   return (
     <>
       <Panel className="holdings-panel">
-        <PanelTitle eyebrow="HOLDINGS" title="Positions & sizing" action={<button className="text-button" onClick={exportCsv}><Icon name="download" size={14}/> Export CSV</button>}/>
+        <PanelTitle eyebrow="HOLDINGS" title="Positions & sizing" action={
+          <div className="panel-actions">
+            <button className="text-button" onClick={exportCsv}><Icon name="download" size={14}/> Export CSV</button>
+            <button className="secondary-button" onClick={() => setEditing(!editing)}><Icon name="edit" size={13}/> {editing ? "Close editor" : "Edit holdings"}</button>
+          </div>
+        }/>
+        {editing && <HoldingsEditor inputs={inputs} positions={summary.positions} onDone={() => { setEditing(false); onSaved(); }}/>}
         <div className="table-wrap">
           <table>
             <thead>
@@ -367,6 +406,89 @@ function HoldingsView({ summary, research, money }: { summary: FeedSummary; rese
 
       {current && <PositionDetail position={current} research={research[current.Ticker]} money={money}/>}
     </>
+  );
+}
+
+const currencyOptions = ["USD", "HKD", "GBP", "EUR", "JPY", "CAD", "AUD", "SGD", "CNY", "INR"];
+const blankHolding = (): HoldingInput => ({ Ticker: "", Name: "", Shares: "", "Avg Cost": "", Currency: "USD", Sector: "", Opened: dateKey(), Notes: "" });
+
+// Edits the ledger's Holdings and Cash tabs (the inputs every MAO job reads), then queues a refresh.
+function HoldingsEditor({ inputs, positions, onDone }: { inputs?: { holdings: HoldingInput[]; cash: CashInput[] }; positions: FeedPosition[]; onDone: () => void }) {
+  const [rows, setRows] = useState<HoldingInput[]>(() =>
+    inputs?.holdings.length ? inputs.holdings.map((h) => ({ ...h, Opened: String(h.Opened || "").slice(0, 10) }))
+    : positions.map((p) => ({ Ticker: p.Ticker, Name: p.Name, Shares: Number(p.Shares) || "", "Avg Cost": Number(p["Avg Cost"]) || "", Currency: String(p.Currency || "USD"), Sector: p.Sector, Opened: String(p.Opened || ""), Notes: "" })));
+  const [cash, setCash] = useState<CashInput[]>(() => inputs?.cash.length ? inputs.cash : [{ Account: "Brokerage USD", Currency: "USD", Amount: 0 }]);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const setRow = (i: number, key: keyof HoldingInput, value: string) => setRows(rows.map((r, j) => (j === i ? { ...r, [key]: key === "Ticker" ? value.toUpperCase() : value } : r)));
+  const setCashRow = (i: number, key: keyof CashInput, value: string) => setCash(cash.map((c, j) => (j === i ? { ...c, [key]: value } : c)));
+
+  const save = async () => {
+    const kept = rows.filter((r) => String(r.Ticker).trim());
+    const problem = kept.map((r) => {
+      const t = String(r.Ticker).trim();
+      if (!/^[A-Z0-9][A-Z0-9.\-^=]{0,14}$/.test(t)) return `“${t}” isn't a ticker. Use Yahoo-style symbols, e.g. AAPL, BRK-B or 0700.HK.`;
+      if (!(Number(r.Shares) > 0)) return `${t}: enter how many shares you hold.`;
+      if (!(Number(r["Avg Cost"]) >= 0) || String(r["Avg Cost"]).trim() === "") return `${t}: enter the average cost per share.`;
+      return "";
+    }).find(Boolean) || (new Set(kept.map((r) => r.Ticker)).size < kept.length ? "Each ticker can appear only once." : "")
+      || (cash.some((c) => String(c.Amount).trim() !== "" && !Number.isFinite(Number(c.Amount))) ? "Cash amounts must be numbers." : "");
+    if (problem) return setMessage(problem);
+    setSaving(true);
+    setMessage("Saving to the MAO Ledger…");
+    try {
+      await saveLedgerInputs(googleJson, kept.map((r) => ({ ...r, Shares: Number(r.Shares), "Avg Cost": Number(r["Avg Cost"]) })), cash.filter((c) => String(c.Account).trim()).map((c) => ({ ...c, Amount: Number(c.Amount) || 0 })));
+      onDone();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Couldn't save to the ledger.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="holdings-editor">
+      <p className="chart-note">Edits go straight to the ledger's Holdings and Cash tabs. Prices, P&L and research are then recalculated by the next MAO run. Use Yahoo-style tickers (AAPL, BRK-B, 0700.HK) and the currency the stock trades in.</p>
+      <div className="table-wrap">
+        <table className="edit-table">
+          <thead><tr>{HOLDING_COLUMNS.map((c) => <th key={c}>{c}</th>)}<th/></tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td><input value={r.Ticker} onChange={(e) => setRow(i, "Ticker", e.target.value)} placeholder="AAPL" aria-label="Ticker"/></td>
+                <td><input value={r.Name} onChange={(e) => setRow(i, "Name", e.target.value)} placeholder="Company" aria-label="Name"/></td>
+                <td><input inputMode="decimal" value={r.Shares} onChange={(e) => setRow(i, "Shares", e.target.value)} placeholder="10" aria-label="Shares"/></td>
+                <td><input inputMode="decimal" value={r["Avg Cost"]} onChange={(e) => setRow(i, "Avg Cost", e.target.value)} placeholder="125.40" aria-label="Average cost"/></td>
+                <td><select value={r.Currency || "USD"} onChange={(e) => setRow(i, "Currency", e.target.value)} aria-label="Currency">{[...new Set([...currencyOptions, String(r.Currency || "USD")])].map((c) => <option key={c}>{c}</option>)}</select></td>
+                <td><input value={r.Sector} onChange={(e) => setRow(i, "Sector", e.target.value)} placeholder="Technology" aria-label="Sector"/></td>
+                <td><input type="date" value={String(r.Opened || "").slice(0, 10)} onChange={(e) => setRow(i, "Opened", e.target.value)} aria-label="Opened"/></td>
+                <td><input value={r.Notes} onChange={(e) => setRow(i, "Notes", e.target.value)} aria-label="Notes"/></td>
+                <td className="row-actions"><button className="row-delete" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Remove ${r.Ticker || "row"}`}><Icon name="trash" size={14}/></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button className="text-button" onClick={() => setRows([...rows, blankHolding()])}><Icon name="plus" size={14}/> Add holding</button>
+
+      <h3 className="editor-heading">Cash</h3>
+      <div className="cash-edit">
+        {cash.map((c, i) => (
+          <div key={i}>
+            <input value={c.Account} onChange={(e) => setCashRow(i, "Account", e.target.value)} placeholder="Account" aria-label="Cash account"/>
+            <select value={c.Currency || "USD"} onChange={(e) => setCashRow(i, "Currency", e.target.value)} aria-label="Cash currency">{[...new Set([...currencyOptions, String(c.Currency || "USD")])].map((x) => <option key={x}>{x}</option>)}</select>
+            <input inputMode="decimal" value={c.Amount} onChange={(e) => setCashRow(i, "Amount", e.target.value)} placeholder="0" aria-label="Cash amount"/>
+            <button className="row-delete" onClick={() => setCash(cash.filter((_, j) => j !== i))} aria-label={`Remove ${c.Account || "cash account"}`}><Icon name="trash" size={14}/></button>
+          </div>
+        ))}
+        <button className="text-button" onClick={() => setCash([...cash, { Account: "", Currency: "USD", Amount: "" }])}><Icon name="plus" size={14}/> Add cash account</button>
+      </div>
+
+      <div className="editor-buttons">
+        <button className="primary-button" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save & recalculate"}</button>
+        {message && <span className="editor-message">{message}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -415,13 +537,157 @@ function PositionDetail({ position: p, research, money }: { position: FeedPositi
 
 const chartRanges: [string, number][] = [["3M", 63], ["6M", 126], ["1Y", 260]];
 
-function ResearchView({ summary, research, notes, money }: { summary: FeedSummary; research: Record<string, FeedResearch>; notes: Record<string, JimNote>; money: Money }) {
-  const tickers = summary.positions.map((p) => p.Ticker).filter((t) => research[t]);
-  const [selected, setSelected] = useStored<string>("investments.research", "");
-  const ticker = tickers.includes(selected) ? selected : tickers[0];
-  const r = ticker ? research[ticker] : undefined;
-  if (!ticker || !r) return <Panel className="inv-empty"><p>No research rows in the feed yet.</p></Panel>;
+type Ticker = [symbol: string, name: string];
+let tickerList: Promise<Ticker[]> | null = null;
+// About 10,000 US listings (SEC) plus large Hong Kong names; loaded on first search only.
+const loadTickers = () => (tickerList ??= fetch(`${import.meta.env.BASE_URL}tickers.json`).then((r) => r.json() as Promise<Ticker[]>).catch(() => []));
 
+function ResearchView({ summary, research, notes, requests, money, onResearch }: {
+  summary: FeedSummary; research: Record<string, FeedResearch>; notes: Record<string, JimNote>; requests: LedgerRequest[]; money: Money; onResearch: (ticker: string) => void;
+}) {
+  const held = summary.positions.map((p) => p.Ticker);
+  const searched = Object.keys(research).filter((t) => !held.includes(t));
+  const [recent, setRecent] = useStored<string[]>("investments.searched", []);
+  const lookups = [...new Set([...recent, ...searched])].filter((t) => !held.includes(t)).slice(0, 12);
+  const [selected, setSelected] = useStored<string>("investments.research", "");
+  const ticker = selected || held.find((t) => research[t]) || "";
+  const r = ticker ? research[ticker] : undefined;
+
+  const open = (t: string) => {
+    const symbol = t.trim().toUpperCase();
+    if (!symbol) return;
+    setSelected(symbol);
+    if (!held.includes(symbol)) setRecent([symbol, ...recent.filter((x) => x !== symbol)].slice(0, 12));
+  };
+  const forget = (t: string) => {
+    setRecent(recent.filter((x) => x !== t));
+    if (selected === t) setSelected("");
+  };
+
+  const chip = (tk: string, removable = false) => {
+    const action = research[tk]?.house_view?.action;
+    const waiting = !research[tk] && requests.some((q) => q.ticker === tk && (q.status || "pending") === "pending");
+    return (
+      <span key={tk} className={`chip-wrap ${tk === ticker ? "active" : ""}`}>
+        <button role="tab" aria-selected={tk === ticker} onClick={() => open(tk)}>
+          <b>{tk}</b>{action ? <em className={actionClass(action)}>{action}</em> : waiting ? <em className="action-badge">Queued</em> : null}
+        </button>
+        {removable && <button className="chip-x" onClick={() => forget(tk)} aria-label={`Remove ${tk} from searches`}><Icon name="x" size={12}/></button>}
+      </span>
+    );
+  };
+
+  return (
+    <>
+      <StockSearch onPick={open}/>
+      <div className="ticker-chips" role="tablist" aria-label="Stocks">
+        <span className="chip-label">Holdings</span>
+        {held.map((tk) => chip(tk))}
+        {!!lookups.length && <span className="chip-label">Searched</span>}
+        {lookups.map((tk) => chip(tk, recent.includes(tk)))}
+      </div>
+      {!ticker ? <Panel className="inv-empty"><p>Search for a stock above, or wait for the feed to load.</p></Panel>
+        : r ? <ResearchDetail ticker={ticker} r={r} note={notes[ticker]} money={money}/>
+        : <PendingResearch key={ticker} ticker={ticker} request={[...requests].reverse().find((q) => q.ticker === ticker)} money={money} onResearch={() => onResearch(ticker)}/>}
+    </>
+  );
+}
+
+function StockSearch({ onPick }: { onPick: (ticker: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [list, setList] = useState<Ticker[]>([]);
+  const [focus, setFocus] = useState(-1);
+  const q = query.trim().toUpperCase();
+  const matches = q.length < 1 ? [] : [
+    ...list.filter(([t]) => t === q),
+    ...list.filter(([t, name]) => t !== q && (t.startsWith(q) || name.toUpperCase().includes(q))),
+  ].slice(0, 8);
+  const pick = (t: string) => {
+    onPick(t);
+    setQuery("");
+    setFocus(-1);
+  };
+  return (
+    <form className="stock-search" role="search" onSubmit={(event) => { event.preventDefault(); if (q) pick(focus >= 0 && matches[focus] ? matches[focus][0] : matches[0]?.[0] === q || !matches.length ? q : matches[0][0]); }}>
+      <Icon name="focus" size={16}/>
+      <input value={query} onFocus={() => loadTickers().then(setList)} onChange={(event) => { setQuery(event.target.value); setFocus(-1); if (!list.length) loadTickers().then(setList); }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") { event.preventDefault(); setFocus(Math.min(focus + 1, matches.length - 1)); }
+          if (event.key === "ArrowUp") { event.preventDefault(); setFocus(Math.max(focus - 1, -1)); }
+          if (event.key === "Escape") setQuery("");
+        }}
+        placeholder="Search any stock by ticker or company, e.g. AMD, Costco, 0700.HK" aria-label="Search stocks" autoComplete="off"
+        role="combobox" aria-expanded={matches.length > 0} aria-controls="stock-suggestions"/>
+      <button type="submit" className="primary-button" disabled={!q}>Research</button>
+      {matches.length > 0 && (
+        <ul id="stock-suggestions" role="listbox">
+          {matches.map(([t, name], i) => (
+            <li key={t} role="option" aria-selected={i === focus} className={i === focus ? "focused" : ""} onMouseDown={(event) => { event.preventDefault(); pick(t); }}>
+              <b>{t}</b><span>{name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </form>
+  );
+}
+
+// A stock with no research row yet: an instant quote from Google Finance, and full research on request.
+function PendingResearch({ ticker, request, money, onResearch }: { ticker: string; request?: LedgerRequest; money: Money; onResearch: () => void }) {
+  const [quotes, setQuotes] = useStored<Record<string, QuickQuote>>("investments.quotes", {});
+  const [state, setState] = useState<"idle" | "loading" | "missing" | "error">("idle");
+  const [error, setError] = useState("");
+  const quote = quotes[ticker];
+  const status = (request?.status || "").toLowerCase();
+
+  useEffect(() => {
+    if (quote && Date.now() - quote.at < 10 * 60_000) return;
+    let live = true;
+    setState("loading");
+    quickQuote(googleJson, ticker)
+      .then((q) => {
+        if (!live) return;
+        if (q) setQuotes((all) => ({ ...Object.fromEntries(Object.entries(all).slice(-20)), [ticker]: q }));
+        setState(q ? "idle" : "missing");
+      })
+      .catch((e) => { if (live) { setError(e instanceof Error ? e.message : "Quote failed."); setState("error"); } });
+    return () => { live = false; };
+  }, [ticker]);
+
+  const px = (v: number | null) => (v === null ? "—" : quote?.currency && quote.currency !== "USD" ? `${quote.currency} ${v.toFixed(2)}` : money(v));
+  return (
+    <div className="inv-grid wide-left">
+      <Panel>
+        <PanelTitle eyebrow={`QUICK QUOTE · GOOGLE FINANCE${quote ? ` · ${timeLabel(new Date(quote.at))}` : ""}`} title={quote ? <>{quote.name} <span className="detail-price">{ticker}</span></> : ticker}/>
+        {state === "loading" && !quote ? <p className="chart-note">Looking up {ticker}…</p>
+          : state === "error" && !quote ? <p className="chart-note">{error}</p>
+          : state === "missing" && !quote ? <p className="chart-note">Google Finance doesn't recognise {ticker}. Check the symbol; non-US stocks need an exchange suffix such as 0700.HK or VOD.L.</p>
+          : quote ? (
+            <>
+              <div className="quote-hero"><strong>{px(quote.price)}</strong>{quote.changePct !== null && <em className={tone(quote.changePct)}>{pct(quote.changePct, 2)} today</em>}</div>
+              <div className="stat-list">
+                <Stat label="Market cap" value={quote.marketCap === null ? "—" : `${quote.currency || "USD"} ${compact(quote.marketCap)}`}/>
+                <Stat label="P/E" value={fixed(quote.pe, 1)}/>
+                <Stat label="EPS" value={fixed(quote.eps, 2)}/>
+                <Stat label="52-week range" value={`${px(quote.low52)} – ${px(quote.high52)}`}/>
+                <Stat label="Volume" value={compact(quote.volume)}/>
+              </div>
+            </>
+          ) : null}
+      </Panel>
+      <Panel>
+        <PanelTitle eyebrow="FULL RESEARCH" title="DCF, moat, sentiment & charts"/>
+        {status === "pending" ? <p className="chart-note">Queued {request?.at ? `at ${timeLabel(new Date(request.at))}` : ""}. This page checks every 30 seconds and shows the research as soon as it's in the ledger.</p>
+          : status === "error" ? <p className="chart-note warn">The last attempt failed: {request?.detail || "unknown error"}.</p>
+          : status === "done" ? <p className="chart-note">Research finished. Press Refresh if it hasn't appeared yet.</p>
+          : <p className="chart-note">The MAO desk runs the same analysis as for your holdings: a two-stage DCF, moat and stability scores, management sentiment from filings, technicals and a house view. It takes a minute or two once it starts.</p>}
+        {status !== "pending" && <button className="primary-button research-go" onClick={onResearch}><Icon name="play" size={13}/> {status === "error" ? "Try again" : "Run full research"}</button>}
+      </Panel>
+    </div>
+  );
+}
+
+function ResearchDetail({ ticker, r, note, money }: { ticker: string; r: FeedResearch; note?: JimNote; money: Money }) {
   const t = r.technicals ?? {};
   const dcf = r.fundamentals?.dcf ?? {};
   const moat = r.fundamentals?.moat ?? {};
@@ -429,21 +695,9 @@ function ResearchView({ summary, research, notes, money }: { summary: FeedSummar
   const ccy = String(t.currency || dcf.currency || "USD");
   const px = (x: unknown) => (n(x) === null ? "—" : ccy === "USD" ? money(x as number) : `${ccy} ${(x as number).toFixed(2)}`);
   const ratio = (x: unknown, digits = 1) => (n(x) === null ? "—" : pct((x as number) * 100, digits));
-  const note = notes[ticker];
 
   return (
     <>
-      <div className="ticker-chips" role="tablist" aria-label="Holdings">
-        {tickers.map((tk) => {
-          const action = research[tk]?.house_view?.action;
-          return (
-            <button key={tk} role="tab" aria-selected={tk === ticker} className={tk === ticker ? "active" : ""} onClick={() => setSelected(tk)}>
-              <b>{tk}</b>{action && <em className={actionClass(action)}>{action}</em>}
-            </button>
-          );
-        })}
-      </div>
-
       <div className="research-head">
         <div>
           <p className="eyebrow">{[t.sector, t.industry].filter(Boolean).join(" · ").toUpperCase()}</p>
