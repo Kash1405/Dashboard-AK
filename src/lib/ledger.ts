@@ -5,19 +5,40 @@ import { uid } from "./utils";
 // The "MAO Ledger" Google Sheet (in the Automated Equity Valuation via MAO folder) is written by
 // the automated valuation runs. The dashboard reads it during Drive sync and treats it as the
 // source of truth for positions, prices, history, cash and the morning briefing.
-// Tabs read: Positions, Daily Prices, Portfolio History, Valuations, Briefings, Jim Notes.
+// Tabs read: Positions, Daily Prices, Portfolio History, Valuations, Briefings, Jim Notes and
+// Dashboard Feed (JSON rows the 6 AM run writes: a portfolio summary and one research row per holding).
 
 export const DEFAULT_LEDGER_ID = "1BCoX9__l-B67bXgk2OgBExZ8rd3-ueI8oftDGUGoE64";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
-const TABS = ["Positions", "Daily Prices", "Portfolio History", "Valuations", "Briefings", "Jim Notes"] as const;
+const TABS = ["Positions", "Daily Prices", "Portfolio History", "Valuations", "Briefings", "Jim Notes", "Dashboard Feed"] as const;
 const REFRESH_MS = 15 * 60 * 1000;
 
 export type LedgerSettings = { id: string; enabled: boolean };
 export type Valuation = { at: string; intrinsic: number; marginOfSafety: number | null; moat: string; moatScore: number; verdict: string };
 export type JimNote = { d: string; action: string; score: string; note: string };
 export type Briefing = { d: string; generatedAt: string; headline: string; winners: string; losers: string; body: string; link: string };
+export type NavPoint = { d: string; nav: number; mv: number; basis: number; cash: number; dayPnl: number };
+// Shapes written by mao/jobs/feed.py. Fields are read defensively in the UI; any may be missing.
+export type FeedPosition = Record<string, number | string> & {
+  Ticker: string; Name: string; Sector: string; returns?: { "1M"?: number | null; "3M"?: number | null; YTD?: number | null; "1Y"?: number | null; spark?: number[] };
+  action?: string; score?: number;
+};
+export type FeedSlice = { label: string; value: number; pct: number };
+export type FeedSummary = {
+  as_of: string;
+  totals: Record<string, number>;
+  liquidity: Record<string, number> & { cash_accounts?: { account: string; currency: string; amount: number; usd: number }[] };
+  allocation: Record<"sector" | "region" | "currency" | "position", FeedSlice[]>;
+  positions: FeedPosition[];
+  checks?: unknown;
+  runs: Record<string, string | number>[];
+};
+export type FeedResearch = Record<string, any>;
+export type Feed = { updated: string; summary: FeedSummary | null; research: Record<string, FeedResearch> };
 export type LedgerData = {
   asOf: string;
+  history?: NavPoint[];
+  feed?: Feed;
   cash: number;
   nav: number;
   sectors: Record<string, string>;
@@ -79,12 +100,16 @@ export async function readLedger(fetchJson: <T>(url: string) => Promise<T>) {
   force = false;
   setStored<LedgerStatus>("~ledger.status", (s) => ({ ...s, loading: true }), statusFallback);
   try {
-    const query = TABS.map((t) => `ranges=${encodeURIComponent(`'${t}'`)}`).join("&");
-    const { valueRanges } = await fetchJson<{ valueRanges: { values?: unknown[][] }[] }>(
-      `${SHEETS_API}/${settings.id}/values:batchGet?${query}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,
+    const get = (tabs: readonly string[]) => fetchJson<{ valueRanges: { values?: unknown[][] }[] }>(
+      `${SHEETS_API}/${settings.id}/values:batchGet?${tabs.map((t) => `ranges=${encodeURIComponent(`'${t}'`)}`).join("&")}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,
     );
-    const [positions, prices, history, valuations, briefings, jim] = valueRanges.map((r) => objects(r.values));
-    applyLedger({ positions, prices, history, valuations, briefings, jim });
+    // A ledger from before the feed existed has no "Dashboard Feed" tab, which fails the whole batch.
+    const { valueRanges } = await get(TABS).catch((error) => {
+      if ((error as { status?: number }).status === 400) return get(TABS.slice(0, -1));
+      throw error;
+    });
+    const [positions, prices, history, valuations, briefings, jim, feed = []] = valueRanges.map((r) => objects(r.values));
+    applyLedger({ positions, prices, history, valuations, briefings, jim, feed });
     setStored<LedgerStatus>("~ledger.status", { loading: false, error: "", at: Date.now() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not read the MAO Ledger.";
@@ -97,7 +122,7 @@ export async function readLedger(fetchJson: <T>(url: string) => Promise<T>) {
   }
 }
 
-function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuations" | "briefings" | "jim", Row[]>) {
+function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuations" | "briefings" | "jim" | "feed", Row[]>) {
   // Price history per ticker from Daily Prices.
   const closes = new Map<string, PricePoint[]>();
   for (const r of tabs.prices) {
@@ -174,8 +199,27 @@ function applyLedger(tabs: Record<"positions" | "prices" | "history" | "valuatio
     ? { d: day(b.date) || str(b.date), generatedAt: str(b["generated at"]), headline: str(b.headline), winners: str(b.winners), losers: str(b.losers), body: str(b.body), link: str(b["doc link"]) }
     : peekStored<LedgerData>("ledger.data")?.briefing ?? null;
 
+  const feed: Feed = { updated: "", summary: null, research: {} };
+  for (const r of tabs.feed) {
+    try {
+      const key = str(r.key);
+      const value = JSON.parse(str(r.json));
+      if (str(r.updated) > feed.updated) feed.updated = str(r.updated);
+      if (key === "summary") feed.summary = value;
+      else if (key.startsWith("research:")) feed.research[key.slice(9).toUpperCase()] = value;
+    } catch {
+      // a half-written row; the next run replaces it
+    }
+  }
+  const previous = peekStored<LedgerData>("ledger.data");
+
   setStored<LedgerData | null>("ledger.data", {
     asOf,
+    history: historyRows.map((r) => ({
+      d: day(r.date), nav: round(numOr(r["nav usd"]), 2), mv: round(numOr(r["market value usd"]), 2), basis: round(numOr(r["cost basis usd"]), 2),
+      cash: round(numOr(r["cash usd"]), 2), dayPnl: round(numOr(r["day p&l usd"]), 2),
+    })),
+    feed: feed.summary || Object.keys(feed.research).length ? feed : previous?.feed,
     cash: last ? numOr(last["cash usd"]) : 0,
     nav: last ? numOr(last["nav usd"]) : 0,
     sectors,

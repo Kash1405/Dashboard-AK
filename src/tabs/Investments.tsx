@@ -1,463 +1,756 @@
-import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
-import { Icon, LineChart, Panel, PanelTitle, Sparkline } from "../components/ui";
+import { useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { Icon, Panel, PanelTitle, Sparkline } from "../components/ui";
 import { useStored } from "../lib/store";
+import { useMoney } from "../lib/portfolio";
 import {
-  currencies, derive, fetchName, fetchQuote, pushHistory, refreshPortfolio, totals,
-  useHoldings, useMarket, useMoney, usePortfolioSettings, useRefreshStatus, useSnapshots, type Holding,
-} from "../lib/portfolio";
-import { ledgerIdFrom, ledgerUrl, useLedgerData, useLedgerSettings, useLedgerStatus, type Briefing, type JimNote, type Valuation } from "../lib/ledger";
+  ledgerIdFrom, ledgerUrl, useLedgerData, useLedgerSettings, useLedgerStatus,
+  type Briefing, type FeedPosition, type FeedResearch, type FeedSummary, type JimNote, type NavPoint,
+} from "../lib/ledger";
 import { refreshLedger, useSyncMeta } from "../lib/sync";
-import { addDays, dateKey, downloadFile, num, parseDateKey, pct, timeLabel, uid } from "../lib/utils";
+import { dateKey, downloadFile, parseDateKey, pct, timeLabel } from "../lib/utils";
+
+// The Investments tab shows the MAO equity research system. Everything comes from the MAO Ledger
+// sheet: the 6 AM scheduled run refreshes prices, NAV history and the "Dashboard Feed" (research
+// per holding), and the 08:50 run writes the morning briefing. The page itself only reads.
 
 type Money = ReturnType<typeof useMoney>;
-const ranges: [string, number][] = [["1W", 7], ["1M", 30], ["3M", 91], ["1Y", 365], ["ALL", 100000]];
+type View = "Summary" | "Holdings" | "Research";
+const views: { view: View; icon: string; blurb: string }[] = [
+  { view: "Summary", icon: "grid", blurb: "Portfolio, liquidity and allocation" },
+  { view: "Holdings", icon: "briefcase", blurb: "Positions, P&L and sizing" },
+  { view: "Research", icon: "bulb", blurb: "Valuation, moat, sentiment and charts" },
+];
+const MAO_SERVER = "http://127.0.0.1:8765";
+const FOLDER_URL = "https://drive.google.com/drive/folders/18allYWNhv9ehaFGu2GIG8xliteo7DXzo";
+
+const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const fixed = (v: unknown, digits = 1, suffix = "") => (n(v) === null ? "—" : `${(v as number).toFixed(digits)}${suffix}`);
+const signed = (v: unknown, digits = 1) => (n(v) === null ? "—" : pct(v as number, digits));
+const tone = (v: unknown) => (n(v) === null || v === 0 ? "" : (v as number) > 0 ? "up" : "down");
+const shortDate = (d: string) => parseDateKey(d).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+const compact = (v: unknown) => (n(v) === null ? "—" : Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(v as number));
+const actionClass = (action?: string) => `action-badge ${(action || "").toLowerCase()}`;
 
 export default function Investments() {
-  const [holdings, setHoldings] = useHoldings();
-  const [settings, setSettings] = usePortfolioSettings();
-  const [market] = useMarket();
-  const [snapshots] = useSnapshots();
-  const [status] = useRefreshStatus();
-  const money = useMoney();
-  const [ledger, setLedger] = useLedgerSettings();
-  const [ledgerData] = useLedgerData();
-  const [ledgerStatus] = useLedgerStatus();
+  const [view, setView] = useStored<View>("investments.view", "Summary");
+  const [ledger] = useLedgerSettings();
+  const [data] = useLedgerData();
+  const [status] = useLedgerStatus();
   const [drive] = useSyncMeta();
-  const linked = ledger.enabled && !!ledger.id;
-  const [editing, setEditing] = useState<Holding | "new" | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [range, setRange] = useState("3M");
+  const [job, setJob] = useState<{ name: string; message: string; error?: boolean } | null>(null);
+  const money = useMoney();
+  const linked = ledger.enabled && !!ledger.id;
+  const summary = data?.feed?.summary ?? null;
+  const active: View = views.some((v) => v.view === view) ? view : "Summary";
+  const busy = !!job && !job.error;
 
-  const t = totals(holdings);
-  const rows = holdings.map((holding) => ({ holding, d: derive(holding) }));
-  const selected = rows.find((row) => row.holding.id === selectedId) ?? rows[0];
-  const days = ranges.find(([label]) => label === range)?.[1] ?? 91;
-  const cutoff = dateKey(addDays(new Date(), -days));
-  const series = snapshots.filter((s) => s.d >= cutoff);
+  // Jobs run on the MAO server on this Mac; the result lands in the ledger, which is then re-read.
+  const runJob = async (name: "briefing" | "update") => {
+    setJob({ name, message: name === "briefing" ? "Generating the briefing…" : "Updating prices and research (about a minute)…" });
+    try {
+      for (const step of name === "briefing" ? ["briefing"] : ["midnight", "feed"]) {
+        const response = await fetch(`${MAO_SERVER}/api/jobs/${step}`, { method: "POST" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || `The ${step} job failed (${response.status}).`);
+      }
+      setJob(null);
+      refreshLedger(); // re-read in the background; the status line shows progress
+    } catch (error) {
+      setJob({
+        name, error: true,
+        message: error instanceof TypeError
+          ? "The MAO server isn't running on this Mac, so this can't run from here. Start it from the MAO folder (.venv/bin/python -m uvicorn mao.server:app --port 8765), or wait for the scheduled run."
+          : error instanceof Error ? error.message : "The job failed.",
+      });
+    }
+  };
 
-  const saveHolding = (holding: Holding) => {
-    setHoldings(holdings.some((h) => h.id === holding.id) ? holdings.map((h) => (h.id === holding.id ? holding : h)) : [...holdings, holding]);
-    setSelectedId(holding.id);
-    setEditing(null);
-  };
-  const removeHolding = (holding: Holding) => {
-    if (window.confirm(`Remove ${holding.symbol} from your portfolio?`)) setHoldings(holdings.filter((h) => h.id !== holding.id));
-  };
-  const exportCsv = () => {
-    const header = ["Symbol", "Name", "Shares", "Avg cost", "Price", "Prev close", "Market value", "P/L", "Intrinsic value", "Upside %", "Valuation"];
-    const lines = rows.map(({ holding: h, d }) => [h.symbol, `"${h.name.replace(/"/g, "'")}"`, h.shares, h.avgCost, h.price, h.prevClose, d.value.toFixed(2), d.pl.toFixed(2), h.intrinsic || "", d.upside === null ? "" : d.upside.toFixed(2), d.status].join(","));
-    downloadFile(`portfolio-${dateKey()}.csv`, [header.join(","), ...lines].join("\n"), "text/csv");
-  };
-
-  const showConnect = !settings.apiKey && !settings.hideConnect && !linked;
-  const asOf = ledgerData?.asOf ? new Date(ledgerData.asOf) : null;
+  const updated = data?.feed?.updated ? new Date(data.feed.updated) : null;
 
   return (
     <main className="page">
       <div className="welcome">
-        <div><p className="eyebrow red">MARKET INTELLIGENCE</p><h1>Investment Control.</h1><p>Prices, positions, and intrinsic value in one view.</p></div>
+        <div>
+          <p className="eyebrow red">MAO · LONG-TERM VALUE RESEARCH</p>
+          <h1>Investment Control.</h1>
+          <p>Portfolio, holdings and research from the automated equity desk, updated every morning at 06:00.</p>
+        </div>
         <div className="welcome-actions">
-          {linked && (
-            <button className="secondary-button" onClick={() => refreshLedger()} disabled={ledgerStatus.loading}>
-              <Icon name="refresh" size={14}/> {ledgerStatus.loading ? "Reading ledger…" : "Refresh from ledger"}
-            </button>
-          )}
-          {settings.apiKey && (
-            <button className="secondary-button" onClick={() => refreshPortfolio()} disabled={status.loading}>
-              <Icon name="refresh" size={14}/> {status.loading ? "Refreshing…" : "Refresh prices"}
-            </button>
-          )}
-          <button className="secondary-button" onClick={() => setShowSettings(!showSettings)}><Icon name="key" size={14}/> Data settings</button>
-          <button className="primary-button" onClick={() => setEditing(editing === "new" ? null : "new")}><Icon name="plus" size={16}/> Add stock</button>
+          <button className="secondary-button" onClick={() => refreshLedger()} disabled={status.loading}>
+            <Icon name="refresh" size={14}/> {status.loading ? "Reading ledger…" : "Refresh"}
+          </button>
+          <button className="secondary-button" onClick={() => runJob("update")} disabled={busy}><Icon name="bolt" size={14}/> Update now</button>
+          <button className="primary-button" onClick={() => runJob("briefing")} disabled={busy}><Icon name="play" size={14}/> Generate briefing</button>
+          <button className="icon-button" onClick={() => setShowSettings(!showSettings)} aria-label="Ledger settings" title="Ledger settings"><Icon name="key" size={15}/></button>
         </div>
       </div>
 
-      {(showSettings || showConnect) && (
-        <Panel className="connect-panel">
-          <div>
-            <p className="eyebrow red">LIVE PRICES · OPTIONAL</p>
-            <h2>Connect a free Finnhub key</h2>
-            <p>
-              Paste a free API key from <a href="https://finnhub.io/register" target="_blank" rel="noreferrer">finnhub.io</a> to pull live prices for US stocks and ETFs every 10 minutes.
-              Without one, everything still works: enter and edit prices yourself. The key is stored only in this browser.
-            </p>
-          </div>
-          <div className="connect-form">
-            <label>API key<input type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value.trim() })} placeholder="Paste your Finnhub key" autoComplete="off"/></label>
-            <label>Currency<select value={settings.currency} onChange={(event) => setSettings({ ...settings, currency: event.target.value })}>{currencies.map((c) => <option key={c}>{c}</option>)}</select></label>
-            <div className="connect-buttons">
-              {settings.apiKey && <button className="primary-button" onClick={() => { refreshPortfolio(); setShowSettings(false); }}>Save & refresh</button>}
-              <button className="secondary-button" onClick={() => { setSettings({ ...settings, hideConnect: true }); setShowSettings(false); }}>{settings.apiKey ? "Close" : "Use manual prices"}</button>
-            </div>
-          </div>
+      {showSettings && <LedgerSettings onClose={() => setShowSettings(false)}/>}
+
+      <p className={`status-line ${status.error || job?.error ? "error" : ""}`}>
+        {job ? job.message
+          : status.error ? <>{status.error} <button className="text-button" onClick={() => refreshLedger(true)}>Reconnect Google</button></>
+          : !linked ? <>The MAO Ledger isn't linked. <button className="text-button" onClick={() => setShowSettings(true)}>Link it</button></>
+          : !drive.enabled ? <>Connect Google to load the MAO Ledger. <button className="text-button" onClick={() => refreshLedger()}>Connect Google</button></>
+          : updated ? `Research updated ${updated.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} ${timeLabel(updated)}${status.at ? ` · ledger read ${timeLabel(new Date(status.at))}` : ""}`
+          : "The ledger has no research feed yet. It appears after the next 06:00 run, or press Update now."}
+      </p>
+
+      <nav className="inv-tabs" aria-label="Investment views">
+        {views.map(({ view: v, icon, blurb }) => (
+          <button key={v} className={active === v ? "active" : ""} onClick={() => setView(v)} aria-pressed={active === v}>
+            <Icon name={icon} size={16}/><span><b>{v}</b><small>{blurb}</small></span>
+          </button>
+        ))}
+      </nav>
+
+      {!summary ? (
+        <Panel className="inv-empty">
+          <Icon name="chart" size={28}/>
+          <p>{linked ? "Waiting for the first Dashboard Feed from the MAO Ledger." : "Link the MAO Ledger to see your portfolio."}</p>
         </Panel>
-      )}
-
-      {showSettings && (
-        <Panel className="connect-panel">
-          <div>
-            <p className="eyebrow red">MAO LEDGER · GOOGLE SHEETS</p>
-            <h2>Automated equity ledger</h2>
-            <p>
-              Positions, prices, portfolio history, intrinsic values and the morning briefing are read from the MAO Ledger in your Automated Equity Valuation folder
-              whenever Google Drive syncs (at most every 15 minutes, or when you press “Refresh from ledger”). Edits made here are replaced on the next read.
-            </p>
-          </div>
-          <div className="connect-form">
-            <label className="wide">Ledger link<input value={ledger.id} onChange={(event) => setLedger({ ...ledger, id: ledgerIdFrom(event.target.value) })} placeholder="Paste the MAO Ledger link" autoComplete="off"/></label>
-            <div className="connect-buttons">
-              <button className="primary-button" onClick={() => { setLedger({ ...ledger, enabled: true }); refreshLedger(); }} disabled={!ledger.id}>{drive.enabled ? "Read ledger now" : "Connect Google & read"}</button>
-              {linked && <button className="secondary-button" onClick={() => setLedger({ ...ledger, enabled: false })}>Unlink</button>}
-              {ledger.id && <a className="text-button" href={ledgerUrl(ledger.id)} target="_blank" rel="noreferrer">Open ledger</a>}
-            </div>
-          </div>
-        </Panel>
-      )}
-
-      {linked && (
-        <p className={`status-line ${ledgerStatus.error ? "error" : ""}`}>
-          {ledgerStatus.error
-            ? <>{ledgerStatus.error} <button className="text-button" onClick={() => refreshLedger(true)}>Reconnect Google</button></>
-            : !drive.enabled ? <>Linked to the MAO Ledger. <button className="text-button" onClick={() => refreshLedger()}>Connect Google Drive</button> to load it.</>
-            : asOf ? `From the MAO Ledger · positions as of ${asOf.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${timeLabel(asOf)}${ledgerStatus.at ? ` · checked ${timeLabel(new Date(ledgerStatus.at))}` : ""}`
-            : "Linked to the MAO Ledger. It loads on the next Drive sync."}
-        </p>
-      )}
-
-      {(status.error || status.at > 0) && settings.apiKey && (
-        <p className={`status-line ${status.error ? "error" : ""}`}>
-          {status.error || `Live prices updated ${timeLabel(new Date(status.at))}`}
-        </p>
-      )}
-
-      {market.length > 0 && settings.apiKey && (
-        <div className="market-strip">
-          {market.map((m) => (
-            <div key={m.symbol}><span>{m.label}</span><strong>{m.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong><em className={m.changePct >= 0 ? "up" : "down"}>{pct(m.changePct)}</em></div>
-          ))}
-        </div>
-      )}
-
-      {editing && (
-        <PositionEditor key={editing === "new" ? "new" : editing.id} initial={editing === "new" ? null : editing} apiKey={settings.apiKey} linked={linked} onSave={saveHolding} onCancel={() => setEditing(null)}/>
-      )}
-
-      <div className={`summary-strip ${ledgerData && linked ? "six" : ""}`}>
-        <div><span>Portfolio value</span><strong>{money(t.value)}</strong></div>
-        <div><span>Today</span><strong className={t.dayChange >= 0 ? "up" : "down"}>{money(t.dayChange, { signed: true })}</strong><em className={t.dayChange >= 0 ? "up" : "down"}>{pct(t.dayPct)}</em></div>
-        <div><span>Total P/L</span><strong className={t.pl >= 0 ? "up" : "down"}>{money(t.pl, { signed: true })}</strong><em className={t.pl >= 0 ? "up" : "down"}>{pct(t.plPct)}</em></div>
-        <div><span>Invested</span><strong>{money(t.cost)}</strong></div>
-        {ledgerData && linked && <div><span>Cash · NAV</span><strong>{money(ledgerData.cash, { digits: 0 })}</strong><em>NAV {money(ledgerData.nav || t.value + ledgerData.cash, { digits: 0 })}</em></div>}
-        <div><span>Vs. intrinsic value</span><strong className={t.marginOfSafety === null ? "" : t.marginOfSafety >= 0 ? "up" : "down"}>{t.marginOfSafety === null ? "—" : pct(t.marginOfSafety, 1)}</strong><em>{t.marginOfSafety === null ? "add estimates" : t.marginOfSafety >= 0 ? "upside" : "downside"}</em></div>
-      </div>
-
-      <div className="investment-grid">
-        <Panel className="performance-card">
-          <PanelTitle eyebrow="PORTFOLIO PERFORMANCE" title={money(t.value)} action={<span className={t.pl >= 0 ? "gain" : "gain loss"}>{money(t.pl, { signed: true })} all time</span>}/>
-          <div className="chart-toolbar">
-            <span>Daily closing value, recorded automatically</span>
-            <div>{ranges.map(([label]) => <button className={range === label ? "active" : ""} onClick={() => setRange(label)} key={label}>{label}</button>)}</div>
-          </div>
-          {series.length > 1 ? (
-            <LineChart values={series.map((s) => s.v)} labels={series.map((s) => parseDateKey(s.d).toLocaleDateString(undefined, { day: "numeric", month: "short" }))} format={(n) => money(n, { digits: 0 })}/>
-          ) : (
-            <div className="chart-empty">
-              <Icon name="chart" size={28}/>
-              <p>The dashboard saves one value per day. Come back tomorrow and the line starts drawing itself{series.length === 1 ? ` (today: ${money(series[0].v)})` : ""}.</p>
-            </div>
-          )}
-        </Panel>
-        <ValuationRadar rows={rows} marginOfSafety={t.marginOfSafety}/>
-      </div>
-
-      {linked && ledgerData?.briefing && <BriefingPanel briefing={ledgerData.briefing}/>}
-
-      <Panel className="holdings-panel">
-        <PanelTitle eyebrow="HOLDINGS" title="Intrinsic Value Monitor" action={<button className="text-button" onClick={exportCsv} disabled={!holdings.length}><Icon name="download" size={14}/> Export CSV</button>}/>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Asset</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Today</th><th>Market value</th><th>Total P/L</th><th>Intrinsic</th><th>Upside</th><th>Valuation</th><th></th></tr>
-            </thead>
-            <tbody>
-              {rows.map(({ holding: h, d }) => (
-                <tr key={h.id} className={selected?.holding.id === h.id ? "selected" : ""} onClick={() => setSelectedId(h.id)}>
-                  <td><b>{h.symbol}</b><span>{h.name}</span></td>
-                  <td>{h.shares.toLocaleString()}</td>
-                  <td>{money(h.avgCost)}</td>
-                  <td>{money(h.price)}</td>
-                  <td className={d.dayPct > 0 ? "up" : d.dayPct < 0 ? "down" : ""}>{h.prevClose ? pct(d.dayPct) : "—"}</td>
-                  <td>{money(d.value)}</td>
-                  <td className={d.pl >= 0 ? "up" : "down"}>{money(d.pl, { signed: true })}<small>{pct(d.plPct, 1)}</small></td>
-                  <td>{h.intrinsic ? money(h.intrinsic) : "—"}</td>
-                  <td className={d.upside === null ? "" : d.upside >= 0 ? "up" : "down"}>{d.upside === null ? "—" : pct(d.upside, 1)}</td>
-                  <td><em className={`status ${d.status.toLowerCase().replace(" ", "-")}`}>{d.status}</em></td>
-                  <td className="row-actions">
-                    <button className="row-delete" onClick={(event) => { event.stopPropagation(); setEditing(h); }} aria-label={`Edit ${h.symbol}`}><Icon name="edit" size={14}/></button>
-                    <button className="row-delete" onClick={(event) => { event.stopPropagation(); removeHolding(h); }} aria-label={`Remove ${h.symbol}`}><Icon name="trash" size={14}/></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {holdings.length === 0 && <p className="empty padded">No positions yet. Use “Add stock” to build your portfolio.</p>}
-        </div>
-      </Panel>
-
-      {selected && (
-        <div className="detail-grid">
-          <StockDetail holding={selected.holding} weight={t.value ? (selected.d.value / t.value) * 100 : 0} money={money} onEdit={() => setEditing(selected.holding)}
-            valuation={linked ? ledgerData?.valuations[selected.holding.symbol] : undefined} note={linked ? ledgerData?.notes[selected.holding.symbol] : undefined} sector={linked ? ledgerData?.sectors[selected.holding.symbol] : undefined}/>
-          <IntrinsicCalculator holding={selected.holding} money={money} onApply={(value) => saveHolding({ ...selected.holding, intrinsic: Math.round(value * 100) / 100 })}/>
-        </div>
+      ) : active === "Summary" ? (
+        <SummaryView summary={summary} history={data?.history ?? []} briefing={data?.briefing ?? null} portfolioNote={data?.notes._PORTFOLIO} money={money}
+          onGenerate={() => runJob("briefing")} busy={busy}/>
+      ) : active === "Holdings" ? (
+        <HoldingsView summary={summary} research={data?.feed?.research ?? {}} money={money}/>
+      ) : (
+        <ResearchView summary={summary} research={data?.feed?.research ?? {}} notes={data?.notes ?? {}} money={money}/>
       )}
     </main>
   );
 }
 
-function ValuationRadar({ rows, marginOfSafety }: { rows: { holding: Holding; d: ReturnType<typeof derive> }[]; marginOfSafety: number | null }) {
-  const score = marginOfSafety === null ? null : Math.max(0, Math.min(100, Math.round(50 + marginOfSafety * 1.5)));
-  const total = rows.reduce((sum, row) => sum + row.d.value, 0) || 1;
-  const share = (status: string) => (rows.filter((row) => row.d.status === status).reduce((sum, row) => sum + row.d.value, 0) / total) * 100;
-  const bars: [string, number][] = [["Undervalued", share("Undervalued")], ["Fair value", share("Fair value")], ["Overvalued", share("Overvalued")], ["No estimate", share("No estimate")]];
+function LedgerSettings({ onClose }: { onClose: () => void }) {
+  const [ledger, setLedger] = useLedgerSettings();
   return (
-    <Panel className="valuation-card">
-      <PanelTitle eyebrow="VALUATION RADAR" title="Opportunity Score"/>
-      <div className="score-ring" style={{ background: `conic-gradient(var(--red) 0 ${score ?? 0}%, #292b30 ${score ?? 0}%)` }}>
-        <div><strong>{score ?? "—"}</strong><span>/ 100</span></div>
+    <Panel className="connect-panel">
+      <div>
+        <p className="eyebrow red">MAO LEDGER · GOOGLE SHEETS</p>
+        <h2>Where the data comes from</h2>
+        <p>
+          The MAO Ledger in your Automated Equity Valuation folder is read whenever Google syncs (at most every 15 minutes, or when you press Refresh).
+          Change holdings and cash in the ledger's Holdings and Cash tabs; the next update picks them up.
+        </p>
       </div>
-      <p>
-        {marginOfSafety === null
-          ? "Add intrinsic value estimates to your holdings to score the portfolio."
-          : <>Holdings with estimates trade <b>{Math.abs(marginOfSafety).toFixed(1)}% {marginOfSafety >= 0 ? "below" : "above"}</b> your intrinsic values.</>}
-      </p>
-      <div className="score-bars">
-        {bars.map(([label, value]) => (
-          <span key={label}>{label}<i><b style={{ width: `${value}%` }} className={label === "Undervalued" ? "good" : label === "Overvalued" ? "bad" : label === "No estimate" ? "none" : ""}/></i><em>{value.toFixed(0)}%</em></span>
-        ))}
+      <div className="connect-form">
+        <label className="wide">Ledger link<input value={ledger.id} onChange={(event) => setLedger({ ...ledger, id: ledgerIdFrom(event.target.value) })} placeholder="Paste the MAO Ledger link" autoComplete="off"/></label>
+        <div className="connect-buttons">
+          <button className="primary-button" onClick={() => { setLedger({ ...ledger, enabled: true }); refreshLedger(); onClose(); }} disabled={!ledger.id}>Read ledger now</button>
+          {ledger.id && <a className="text-button" href={ledgerUrl(ledger.id)} target="_blank" rel="noreferrer">Open ledger</a>}
+          <a className="text-button" href={FOLDER_URL} target="_blank" rel="noreferrer">Open Drive folder</a>
+        </div>
       </div>
-      <small className="footnote">Share of portfolio value. Undervalued = 10%+ below intrinsic value.</small>
     </Panel>
   );
 }
 
-type Draft = { symbol: string; name: string; shares: string; avgCost: string; price: string; prevClose: string; intrinsic: string };
+/* ---------------------------------------------------------------- Summary */
 
-function PositionEditor({ initial, apiKey, linked, onSave, onCancel }: { initial: Holding | null; apiKey: string; linked: boolean; onSave: (h: Holding) => void; onCancel: () => void }) {
-  const [draft, setDraft] = useState<Draft>(() => ({
-    symbol: initial?.symbol ?? "",
-    name: initial?.name ?? "",
-    shares: initial ? String(initial.shares) : "",
-    avgCost: initial ? String(initial.avgCost) : "",
-    price: initial ? String(initial.price) : "",
-    prevClose: initial?.prevClose ? String(initial.prevClose) : "",
-    intrinsic: initial?.intrinsic ? String(initial.intrinsic) : "",
-  }));
-  const [message, setMessage] = useState("");
-  const set = (field: keyof Draft) => (event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, [field]: event.target.value });
+const ranges: [string, number][] = [["1M", 30], ["3M", 91], ["6M", 182], ["1Y", 365], ["ALL", 100000]];
 
-  const lookup = async () => {
-    const symbol = draft.symbol.trim().toUpperCase();
-    if (!apiKey || !symbol || initial) return;
-    setMessage("Looking up live price…");
-    try {
-      const [quote, name] = await Promise.all([fetchQuote(symbol, apiKey), fetchName(symbol, apiKey).catch(() => "")]);
-      setDraft((current) => ({ ...current, price: current.price || String(quote.price), prevClose: current.prevClose || String(quote.prevClose), name: current.name || name }));
-      setMessage(`Live price found: ${quote.price}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Lookup failed");
-    }
-  };
-
-  const save = () => {
-    const symbol = draft.symbol.trim().toUpperCase();
-    const price = num(draft.price);
-    const shares = num(draft.shares);
-    if (!symbol) return setMessage("Enter a ticker symbol.");
-    if (!(price > 0)) return setMessage("Enter the current market price.");
-    if (!(shares > 0)) return setMessage("Enter how many shares you hold.");
-    const avgCost = num(draft.avgCost) || price;
-    onSave({
-      id: initial?.id ?? uid(),
-      symbol,
-      name: draft.name.trim() || symbol,
-      shares,
-      avgCost,
-      price,
-      prevClose: num(draft.prevClose),
-      intrinsic: num(draft.intrinsic),
-      history: initial && initial.price === price ? initial.history : pushHistory(initial?.history ?? [], price),
-      updatedAt: initial?.updatedAt,
-    });
-  };
-
+function SummaryView({ summary, history, briefing, portfolioNote, money, onGenerate, busy }: {
+  summary: FeedSummary; history: NavPoint[]; briefing: Briefing | null; portfolioNote?: JimNote; money: Money; onGenerate: () => void; busy: boolean;
+}) {
+  const t = summary.totals;
+  const liq = summary.liquidity;
+  const movers = [...summary.positions].sort((a, b) => Math.abs(Number(b["Day Change %"]) || 0) - Math.abs(Number(a["Day Change %"]) || 0));
   return (
-    <Panel className="position-editor">
-      <PanelTitle eyebrow={initial ? "EDIT POSITION" : "NEW POSITION"} title={initial ? `Edit ${initial.symbol}` : "Add a stock"} action={<button className="icon-button mini" onClick={onCancel} aria-label="Close"><Icon name="x" size={15}/></button>}/>
-      <form className="editor-fields" onSubmit={(event) => { event.preventDefault(); save(); }}>
-        <label>Symbol<input value={draft.symbol} onChange={set("symbol")} onBlur={lookup} placeholder="e.g. AMD" autoFocus={!initial}/></label>
-        <label>Company<input value={draft.name} onChange={set("name")} placeholder="Company name"/></label>
-        <label>Shares<input inputMode="decimal" value={draft.shares} onChange={set("shares")} placeholder="10"/></label>
-        <label>Avg cost / share<input inputMode="decimal" value={draft.avgCost} onChange={set("avgCost")} placeholder="Defaults to price"/></label>
-        <label>Market price<input inputMode="decimal" value={draft.price} onChange={set("price")} placeholder="125.40"/></label>
-        <label>Previous close<input inputMode="decimal" value={draft.prevClose} onChange={set("prevClose")} placeholder="For day change"/></label>
-        <label>Intrinsic value<input inputMode="decimal" value={draft.intrinsic} onChange={set("intrinsic")} placeholder="Your estimate"/></label>
-        <div className="editor-buttons">
-          <button type="submit" className="primary-button">{initial ? "Save changes" : "Add to portfolio"}</button>
-          <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
-        </div>
-      </form>
-      {(message || linked) && <p className="editor-message">{message || "Positions come from the MAO Ledger, so this change lasts until the next ledger read. Make lasting changes in the ledger."}</p>}
-    </Panel>
-  );
-}
+    <>
+      <div className="summary-strip six">
+        <div><span>Net asset value</span><strong>{money(t.nav)}</strong></div>
+        <div><span>Today</span><strong className={tone(t.day_pnl)}>{money(t.day_pnl, { signed: true })}</strong><em className={tone(t.day_pnl)}>{signed(t.day_pnl_pct, 2)}</em></div>
+        <div><span>Unrealized P&L</span><strong className={tone(t.unrealized_pnl)}>{money(t.unrealized_pnl, { signed: true })}</strong><em className={tone(t.unrealized_pnl)}>{signed(t.unrealized_pnl_pct)}</em></div>
+        <div><span>Invested</span><strong>{money(t.cost_basis)}</strong><em>{money(t.market_value)} now</em></div>
+        <div><span>Cash</span><strong>{money(t.cash)}</strong><em>{fixed(liq.cash_pct, 1, "%")} of NAV</em></div>
+        <div><span>Positions</span><strong>{t.positions}</strong><em>{fixed(liq.effective_positions, 1)} effective</em></div>
+      </div>
 
-function StockDetail({ holding, weight, money, onEdit, valuation, note, sector }: { holding: Holding; weight: number; money: Money; onEdit: () => void; valuation?: Valuation; note?: JimNote; sector?: string }) {
-  const d = derive(holding);
-  const marks = [
-    { label: "Avg cost", value: holding.avgCost, cls: "cost" },
-    { label: "Price", value: holding.price, cls: "price" },
-    ...(holding.intrinsic ? [{ label: "Intrinsic", value: holding.intrinsic, cls: "intrinsic" }] : []),
-  ];
-  const lo = Math.min(...marks.map((m) => m.value)) * 0.9;
-  const hi = Math.max(...marks.map((m) => m.value)) * 1.1;
-  const pos = (value: number) => ((value - lo) / (hi - lo || 1)) * 100;
-  const history = holding.history.map((point) => point.p);
+      <div className="inv-grid wide-left">
+        <NavPanel history={history} money={money}/>
+        <AllocationPanel summary={summary} money={money}/>
+      </div>
 
-  return (
-    <Panel className="stock-detail">
-      <PanelTitle eyebrow={sector ? `${holding.name} · ${sector}`.toUpperCase() : holding.name.toUpperCase()} title={<>{holding.symbol} <span className="detail-price">{money(holding.price)}</span> <em className={d.dayPct >= 0 ? "up" : "down"}>{holding.prevClose ? pct(d.dayPct) : ""}</em></>}
-        action={<button className="text-button" onClick={onEdit}><Icon name="edit" size={14}/> Edit</button>}/>
-      <div className="detail-chart">
-        {history.length > 1 ? <Sparkline values={history} tall/> : <p className="chart-note">Price history fills in each day the price is refreshed or edited.</p>}
+      <BriefingPanel briefing={briefing} onGenerate={onGenerate} busy={busy}/>
+
+      <div className="inv-grid three">
+        <Panel>
+          <PanelTitle eyebrow="LIQUIDITY" title="Cash & concentration"/>
+          <div className="stat-list">
+            <Stat label="Cash share of NAV" value={fixed(liq.cash_pct, 1, "%")}/>
+            <Stat label="Sellable within 1 day" value={fixed(liq.liquid_1d_pct, 0, "%")} hint="At 10% of average daily volume"/>
+            <Stat label="Largest position" value={fixed(liq.largest_position_pct, 1, "%")} warn={(n(liq.largest_position_pct) ?? 0) > 15} hint="Desk limit 15%"/>
+            <Stat label="Effective positions" value={fixed(liq.effective_positions, 1)} hint={`HHI ${fixed(liq.hhi, 2)}`}/>
+          </div>
+          {!!liq.cash_accounts?.length && (
+            <div className="mini-table">
+              {liq.cash_accounts.map((a) => <div key={a.account}><span>{a.account}</span><b>{a.currency} {Number(a.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></div>)}
+            </div>
+          )}
+        </Panel>
+        <Panel>
+          <PanelTitle eyebrow="LAST SESSION" title="Movers"/>
+          <div className="mover-list">
+            {movers.map((p) => (
+              <div key={p.Ticker}>
+                <span><b>{p.Ticker}</b><small>{p.Name}</small></span>
+                <Sparkline values={p.returns?.spark?.slice(-20) ?? [0, 0]} positive={(Number(p["Day Change %"]) || 0) >= 0}/>
+                <em className={tone(p["Day Change %"])}>{signed(p["Day Change %"], 2)}<small>{money(Number(p["Day P&L USD"]) || 0, { signed: true })}</small></em>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel>
+          <PanelTitle eyebrow="AUTOMATION" title="Recent runs"/>
+          <div className="run-list">
+            {summary.runs.slice(0, 7).map((r, i) => (
+              <div key={i} className={r.Status === "ok" ? "" : "failed"}>
+                <i/><span><b>{String(r.Job).replace(/_/g, " ")}</b><small>{String(r.Detail || "")}</small></span>
+                <em>{r.Timestamp ? `${new Date(String(r.Timestamp)).toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${timeLabel(new Date(String(r.Timestamp)))}` : ""}</em>
+              </div>
+            ))}
+          </div>
+        </Panel>
       </div>
-      <div className="price-ladder" aria-label="Average cost, price and intrinsic value compared">
-        <i/>
-        {marks.map((m) => (
-          <span key={m.label} className={m.cls} style={{ left: `${pos(m.value)}%` }}><b>{m.label}</b>{money(m.value)}</span>
-        ))}
-      </div>
-      <div className="detail-stats">
-        <div><span>Shares</span><strong>{holding.shares.toLocaleString()}</strong></div>
-        <div><span>Market value</span><strong>{money(d.value)}</strong></div>
-        <div><span>Weight</span><strong>{weight.toFixed(1)}%</strong></div>
-        <div><span>Total P/L</span><strong className={d.pl >= 0 ? "up" : "down"}>{money(d.pl, { signed: true })}</strong></div>
-        <div><span>Margin of safety</span><strong className={d.upside === null ? "" : d.upside >= 0 ? "up" : "down"}>{d.upside === null ? "—" : pct(d.upside, 1)}</strong></div>
-        {valuation && <div><span>Ledger verdict</span><strong>{valuation.verdict || "—"}</strong></div>}
-        {valuation && <div><span>Moat</span><strong>{valuation.moat || "—"}{valuation.moatScore ? <small> {valuation.moatScore.toFixed(0)}/100</small> : null}</strong></div>}
-        <div><span>Last live update</span><strong>{holding.updatedAt ? `${new Date(holding.updatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${timeLabel(new Date(holding.updatedAt))}` : "Manual"}</strong></div>
-      </div>
-      {note && (note.note || note.action) && (
-        <div className="ledger-note">
-          <span>Analyst note · {note.d}{note.action ? ` · ${note.action}` : ""}{note.score ? ` · score ${note.score}` : ""}</span>
-          {note.note && <p>{note.note}</p>}
-        </div>
+
+      {portfolioNote?.note && (
+        <Panel className="desk-note">
+          <PanelTitle eyebrow={`DESK NOTE · PORTFOLIO · ${portfolioNote.d}`} title="What the desk is watching"/>
+          <Markdown text={portfolioNote.note}/>
+        </Panel>
       )}
+    </>
+  );
+}
+
+function NavPanel({ history, money }: { history: NavPoint[]; money: Money }) {
+  const [range, setRange] = useStored("investments.range", "3M");
+  const days = ranges.find(([label]) => label === range)?.[1] ?? 91;
+  const cutoff = dateKey(new Date(Date.now() - days * 864e5));
+  const points = history.filter((p) => p.d >= cutoff);
+  const first = points[0];
+  const last = points[points.length - 1];
+  const change = first && last ? last.nav - first.nav : 0;
+  return (
+    <Panel className="nav-panel">
+      <PanelTitle eyebrow="NET ASSET VALUE" title={last ? money(last.nav) : "—"}
+        action={first && last ? <span className={change >= 0 ? "gain" : "gain loss"}>{money(change, { signed: true })} · {range}</span> : undefined}/>
+      <div className="chart-toolbar">
+        <span>Holdings plus cash, daily close</span>
+        <div>{ranges.map(([label]) => <button className={range === label ? "active" : ""} onClick={() => setRange(label)} key={label}>{label}</button>)}</div>
+      </div>
+      {points.length > 1 ? (
+        <SeriesChart dates={points.map((p) => p.d)} height={240} format={(v) => money(v, { digits: 0 })}
+          series={[
+            { label: "NAV", color: "var(--green)", values: points.map((p) => p.nav), area: true },
+            { label: "Money put in (cost + cash)", color: "#7d8088", values: points.map((p) => p.basis + p.cash), dashed: true },
+          ]}/>
+      ) : <p className="chart-note">NAV history appears after the first morning update.</p>}
     </Panel>
   );
 }
 
-// The ledger writes briefings as Markdown (with the odd HTML tag); render headings, bullets and bold.
-function BriefingPanel({ briefing }: { briefing: Briefing }) {
+function AllocationPanel({ summary, money }: { summary: FeedSummary; money: Money }) {
+  const [by, setBy] = useStored<"sector" | "region" | "currency" | "position">("investments.allocation", "sector");
+  const slices = summary.allocation[by] ?? [];
+  const max = Math.max(...slices.map((s) => s.pct), 1);
+  return (
+    <Panel>
+      <PanelTitle eyebrow="ALLOCATION" title="Where the money is" action={
+        <div className="segmented">
+          {(["sector", "region", "currency", "position"] as const).map((k) => <button key={k} className={by === k ? "active" : ""} onClick={() => setBy(k)}>{k[0].toUpperCase() + k.slice(1)}</button>)}
+        </div>
+      }/>
+      <div className="alloc-bars">
+        {slices.map((s) => (
+          <div key={s.label} title={`${s.label}: ${money(s.value)} (${s.pct.toFixed(1)}%)`}>
+            <span>{s.label}</span>
+            <i><b style={{ width: `${(s.pct / max) * 100}%` }} className={s.label === "Cash" ? "cash" : ""}/></i>
+            <em>{s.pct.toFixed(1)}%<small>{money(s.value, { digits: 0 })}</small></em>
+          </div>
+        ))}
+      </div>
+      <small className="footnote">Share of NAV{by === "sector" ? ", cash included" : ""}. Desk limits: 15% per name, 35% per sector.</small>
+    </Panel>
+  );
+}
+
+// The ledger writes briefings as Markdown; this renders headings, bullets and bold.
+function BriefingPanel({ briefing, onGenerate, busy }: { briefing: Briefing | null; onGenerate: () => void; busy: boolean }) {
   const [open, setOpen] = useStored("ledger.briefingOpen", false);
-  const lines = briefing.body.replace(/<[^>]*>/g, "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("# "));
-  const bold = (text: string) => text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
+  const generated = briefing?.generatedAt ? new Date(briefing.generatedAt) : null;
+  const body = briefing ? briefing.body.split("\n").filter((l) => !l.startsWith("# ") && l.replace(/\*/g, "").trim() !== briefing.headline).join("\n") : "";
+  return (
+    <Panel className="briefing-panel">
+      <PanelTitle
+        eyebrow={briefing ? `MORNING BRIEFING · ${parseDateKey(briefing.d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}${generated && !isNaN(+generated) ? ` · ${timeLabel(generated)}` : ""}` : "MORNING BRIEFING"}
+        title={briefing?.headline || "No briefing yet"}
+        action={
+          <div className="panel-actions">
+            {briefing?.link && <a className="text-button" href={briefing.link} target="_blank" rel="noreferrer"><Icon name="external" size={14}/> Open doc</a>}
+            <button className="secondary-button" onClick={onGenerate} disabled={busy}><Icon name="play" size={13}/> Generate</button>
+          </div>
+        }/>
+      {briefing ? (
+        <>
+          <div className="briefing-movers">
+            {briefing.winners && <div><span>Winners</span><p className="up">{briefing.winners}</p></div>}
+            {briefing.losers && <div><span>Losers</span><p className="down">{briefing.losers}</p></div>}
+          </div>
+          {open && <div className="briefing-body"><Markdown text={body}/></div>}
+          <button className="text-button" onClick={() => setOpen(!open)}>{open ? "Hide full briefing" : "Read full briefing"}</button>
+        </>
+      ) : <p className="chart-note">The briefing is written at 08:50 every morning, or press Generate.</p>}
+    </Panel>
+  );
+}
+
+/* ---------------------------------------------------------------- Holdings */
+
+function HoldingsView({ summary, research, money }: { summary: FeedSummary; research: Record<string, FeedResearch>; money: Money }) {
+  const [selected, setSelected] = useStored<string>("investments.holding", "");
+  const positions = summary.positions;
+  const current = positions.find((p) => p.Ticker === selected) ?? positions[0];
+  const v = (p: FeedPosition, key: string) => Number(p[key]) || 0;
+
+  const exportCsv = () => {
+    const cols = ["Ticker", "Name", "Sector", "Currency", "Shares", "Avg Cost", "Price", "Market Value USD", "Cost Basis USD", "Unrealized P&L USD", "Unrealized P&L %", "Day Change %", "Weight %"];
+    const lines = positions.map((p) => [...cols.map((c) => `"${String(p[c] ?? "").replace(/"/g, "'")}"`), p.returns?.["1M"] ?? "", p.returns?.["3M"] ?? "", p.returns?.YTD ?? "", p.returns?.["1Y"] ?? "", p.action ?? ""].join(","));
+    downloadFile(`holdings-${dateKey()}.csv`, [[...cols, "1M %", "3M %", "YTD %", "1Y %", "House view"].join(","), ...lines].join("\n"), "text/csv");
+  };
+
+  return (
+    <>
+      <Panel className="holdings-panel">
+        <PanelTitle eyebrow="HOLDINGS" title="Positions & sizing" action={<button className="text-button" onClick={exportCsv}><Icon name="download" size={14}/> Export CSV</button>}/>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Asset</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Today</th><th>Market value</th><th>Weight</th><th>Unrealized P&L</th><th>1M</th><th>3M</th><th>YTD</th><th>1Y</th><th>60 days</th><th>House view</th></tr>
+            </thead>
+            <tbody>
+              {positions.map((p) => {
+                const ccy = String(p.Currency || "USD");
+                const native = (x: number) => (ccy === "USD" ? money(x) : `${ccy} ${x.toFixed(2)}`);
+                return (
+                  <tr key={p.Ticker} className={current?.Ticker === p.Ticker ? "selected" : ""} onClick={() => setSelected(p.Ticker)}>
+                    <td><b>{p.Ticker}</b><span>{p.Name} · {p.Sector}</span></td>
+                    <td>{v(p, "Shares").toLocaleString()}</td>
+                    <td>{native(v(p, "Avg Cost"))}</td>
+                    <td>{native(v(p, "Price"))}</td>
+                    <td className={tone(p["Day Change %"])}>{signed(p["Day Change %"], 2)}</td>
+                    <td>{money(v(p, "Market Value USD"))}</td>
+                    <td className={v(p, "Weight %") > 15 ? "warn" : ""}>{v(p, "Weight %").toFixed(1)}%</td>
+                    <td className={tone(p["Unrealized P&L USD"])}>{money(v(p, "Unrealized P&L USD"), { signed: true })}<small>{signed(p["Unrealized P&L %"])}</small></td>
+                    {(["1M", "3M", "YTD", "1Y"] as const).map((k) => <td key={k} className={tone(p.returns?.[k])}>{signed(p.returns?.[k])}</td>)}
+                    <td className="spark-cell"><Sparkline values={p.returns?.spark ?? [0, 0]}/></td>
+                    <td>{p.action ? <em className={actionClass(p.action)}>{p.action}</em> : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><b>Total</b><span>{positions.length} positions + cash {money(summary.totals.cash)}</span></td>
+                <td/><td/><td/>
+                <td className={tone(summary.totals.day_pnl)}>{signed(summary.totals.day_pnl_pct, 2)}</td>
+                <td>{money(summary.totals.market_value)}</td>
+                <td>{(100 - (n(summary.liquidity.cash_pct) ?? 0)).toFixed(1)}%</td>
+                <td className={tone(summary.totals.unrealized_pnl)}>{money(summary.totals.unrealized_pnl, { signed: true })}<small>{signed(summary.totals.unrealized_pnl_pct)}</small></td>
+                <td colSpan={6}/>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Panel>
+
+      {current && <PositionDetail position={current} research={research[current.Ticker]} money={money}/>}
+    </>
+  );
+}
+
+function PositionDetail({ position: p, research, money }: { position: FeedPosition; research?: FeedResearch; money: Money }) {
+  const chart = research?.chart;
+  const ccy = String(p.Currency || "USD");
+  const avg = Number(p["Avg Cost"]) || 0;
+  const opened = chart?.d ? (chart.d as string[]).findIndex((d) => d >= String(p.Opened || "")) : -1;
+  const since = opened > 0 ? opened : 0;
+  const dates: string[] = chart?.d?.slice(since) ?? [];
+  const closes: (number | null)[] = chart?.close?.slice(since) ?? [];
+  const units = (x: number) => (ccy === "USD" ? money(x) : `${ccy} ${x.toFixed(2)}`);
+  const levels = research?.house_view?.levels;
+  const fair = n(levels?.fair_value);
+  return (
+    <div className="inv-grid wide-left">
+      <Panel>
+        <PanelTitle eyebrow={`${p.Name} · ${p.Sector}`.toUpperCase()} title={<>{p.Ticker} <span className="detail-price">{units(Number(p.Price) || 0)}</span></>}
+          action={<span className={Number(p["Unrealized P&L USD"]) >= 0 ? "gain" : "gain loss"}>{money(Number(p["Unrealized P&L USD"]) || 0, { signed: true })} unrealized</span>}/>
+        {dates.length > 1 ? (
+          <SeriesChart dates={dates} height={220} format={units}
+            series={[{ label: "Price", color: "#e6e7ea", values: closes, area: true }]}
+            refs={[{ label: "Avg cost", value: avg, color: "var(--amber)" }, ...(fair !== null ? [{ label: "Fair value", value: fair, color: "#5b9cf5" }] : [])]}/>
+        ) : <p className="chart-note">The price chart appears after the next morning update.</p>}
+        <small className="footnote">{p.Opened ? `Since the position opened on ${shortDate(String(p.Opened))}. ` : ""}Dashed lines: your average cost{fair !== null ? " and the DCF fair value" : ""}.</small>
+      </Panel>
+      <Panel>
+        <PanelTitle eyebrow="POSITION" title="Sizing & cost"/>
+        <div className="stat-list">
+          <Stat label="Shares" value={(Number(p.Shares) || 0).toLocaleString()}/>
+          <Stat label="Average cost" value={units(avg)}/>
+          <Stat label="Cost basis" value={money(Number(p["Cost Basis USD"]) || 0)}/>
+          <Stat label="Market value" value={money(Number(p["Market Value USD"]) || 0)}/>
+          <Stat label="Weight of NAV" value={fixed(p["Weight %"], 1, "%")} warn={(Number(p["Weight %"]) || 0) > 15} hint="Desk limit 15%"/>
+          <Stat label="Daily volatility" value={fixed(p["Daily Vol %"], 2, "%")} hint="Standard deviation, last 60 days"/>
+          <Stat label="Opened" value={p.Opened ? shortDate(String(p.Opened)) : "—"}/>
+          {research?.house_view && <Stat label="House view" value={<em className={actionClass(research.house_view.action)}>{research.house_view.action} · {fixed(research.house_view.score, 0)}</em>}/>}
+        </div>
+        {!!research?.house_view?.notes?.length && <ul className="note-list">{(research.house_view.notes as string[]).map((note, i) => <li key={i}>{note}</li>)}</ul>}
+      </Panel>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- Research */
+
+const chartRanges: [string, number][] = [["3M", 63], ["6M", 126], ["1Y", 260]];
+
+function ResearchView({ summary, research, notes, money }: { summary: FeedSummary; research: Record<string, FeedResearch>; notes: Record<string, JimNote>; money: Money }) {
+  const tickers = summary.positions.map((p) => p.Ticker).filter((t) => research[t]);
+  const [selected, setSelected] = useStored<string>("investments.research", "");
+  const ticker = tickers.includes(selected) ? selected : tickers[0];
+  const r = ticker ? research[ticker] : undefined;
+  if (!ticker || !r) return <Panel className="inv-empty"><p>No research rows in the feed yet.</p></Panel>;
+
+  const t = r.technicals ?? {};
+  const dcf = r.fundamentals?.dcf ?? {};
+  const moat = r.fundamentals?.moat ?? {};
+  const hv = r.house_view ?? {};
+  const ccy = String(t.currency || dcf.currency || "USD");
+  const px = (x: unknown) => (n(x) === null ? "—" : ccy === "USD" ? money(x as number) : `${ccy} ${(x as number).toFixed(2)}`);
+  const ratio = (x: unknown, digits = 1) => (n(x) === null ? "—" : pct((x as number) * 100, digits));
+  const note = notes[ticker];
+
+  return (
+    <>
+      <div className="ticker-chips" role="tablist" aria-label="Holdings">
+        {tickers.map((tk) => {
+          const action = research[tk]?.house_view?.action;
+          return (
+            <button key={tk} role="tab" aria-selected={tk === ticker} className={tk === ticker ? "active" : ""} onClick={() => setSelected(tk)}>
+              <b>{tk}</b>{action && <em className={actionClass(action)}>{action}</em>}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="research-head">
+        <div>
+          <p className="eyebrow">{[t.sector, t.industry].filter(Boolean).join(" · ").toUpperCase()}</p>
+          <h2>{t.name || ticker} <span>{ticker}</span></h2>
+        </div>
+        <div className="research-price">
+          <strong>{px(t.price)}</strong>
+          <em className={tone(t.change_1d)}>{ratio(t.change_1d, 2)} today</em>
+        </div>
+        <div className="research-verdict">
+          <span>House view</span>
+          <em className={actionClass(hv.action)}>{hv.action || "—"}</em>
+          <b>{fixed(hv.score, 0)}<small>/100</small></b>
+        </div>
+      </div>
+
+      <div className="inv-grid wide-left">
+        <PricePanel chart={r.chart} format={px} levels={hv.levels}/>
+        <Panel>
+          <PanelTitle eyebrow="TECHNICALS" title={<>Score {fixed(t.technical_score, 0)}<small className="title-small">/100</small></>}/>
+          <div className="stat-list">
+            <Stat label="RSI (14)" value={fixed(t.rsi14, 0)} hint={n(t.rsi14) === null ? "" : t.rsi14 > 70 ? "Overbought" : t.rsi14 < 30 ? "Oversold" : "Neutral"}/>
+            <Stat label="MACD vs signal" value={n(t.macd) === null ? "—" : `${t.macd.toFixed(2)} / ${fixed(t.macd_signal, 2)}`} hint={n(t.macd) !== null && n(t.macd_signal) !== null ? (t.macd > t.macd_signal ? "Above signal" : "Below signal") : ""}/>
+            <Stat label="50 / 200-day average" value={`${px(t.sma50)} / ${px(t.sma200)}`}/>
+            <Stat label="52-week range" value={`${px(t.low_52w)} – ${px(t.high_52w)}`}/>
+            <Stat label="Volatility (annual)" value={n(t.volatility_ann) === null ? "—" : `${(t.volatility_ann * 100).toFixed(0)}%`}/>
+            <Stat label="Max drawdown" value={n(t.max_drawdown) === null ? "—" : `${(t.max_drawdown * 100).toFixed(0)}%`}/>
+            <Stat label="Return 3M · 1Y" value={<><span className={tone(t.return_3m)}>{ratio(t.return_3m)}</span> · <span className={tone(t.return_1y)}>{ratio(t.return_1y)}</span></>}/>
+          </div>
+          {!!t.signals?.length && <ul className="note-list">{(t.signals as string[]).map((sig, i) => <li key={i}>{sig}</li>)}</ul>}
+        </Panel>
+      </div>
+
+      <div className="inv-grid three">
+        <DcfPanel dcf={dcf} format={px}/>
+        <HouseViewPanel hv={hv} format={px}/>
+        <Panel>
+          <PanelTitle eyebrow="FUNDAMENTALS" title="Snapshot"/>
+          <div className="stat-list">
+            <Stat label="Market cap" value={n(t.market_cap) === null ? "—" : `${ccy} ${compact(t.market_cap)}`}/>
+            <Stat label="P/E trailing" value={fixed(t.pe, 1)}/>
+            <Stat label="P/E forward" value={fixed(t.forward_pe, 1)}/>
+            <Stat label="Dividend yield" value={fixed(t.dividend_yield, 2, "%")}/>
+            <Stat label="Stability score" value={fixed(moat.stability_score, 0)} hint={n(moat.stability_detail?.beta) !== null ? `Beta ${fixed(moat.stability_detail.beta, 2)}` : ""}/>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="inv-grid two">
+        <MoatPanel moat={moat}/>
+        <SentimentPanel s={r.sentiment ?? {}}/>
+      </div>
+
+      <div className="inv-grid two">
+        <Panel className="desk-note">
+          <PanelTitle eyebrow={note ? `DESK NOTE · ${note.d}` : "DESK NOTE"} title={note?.action ? `${note.action}${note.score ? ` · ${Number(note.score).toFixed(0)}` : ""}` : "Analyst view"}/>
+          {note?.note ? <Markdown text={note.note}/> : <p className="chart-note">Desk notes are written after each 06:00 update.</p>}
+        </Panel>
+        <Panel>
+          <PanelTitle eyebrow="NEWS" title="Recent headlines"/>
+          <div className="news-list">
+            {((r.news ?? []) as { title: string; publisher?: string; url?: string; date?: string }[]).map((item, i) => (
+              <a key={i} href={item.url} target="_blank" rel="noreferrer">
+                <b>{item.title.replace(/ - [^-]+$/, "")}</b>
+                <small>{[item.publisher, item.date && !isNaN(+new Date(item.date)) ? new Date(item.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : ""].filter(Boolean).join(" · ")}</small>
+              </a>
+            ))}
+            {!r.news?.length && <p className="chart-note">No recent headlines.</p>}
+          </div>
+        </Panel>
+      </div>
+      <small className="footnote research-foot">Model output from the MAO research desk, updated daily. Not financial advice.</small>
+    </>
+  );
+}
+
+function PricePanel({ chart, format, levels }: { chart?: FeedResearch; format: (v: unknown) => string; levels?: Record<string, number> }) {
+  const [range, setRange] = useStored("investments.chartRange", "1Y");
+  if (!chart?.d?.length) return <Panel><PanelTitle eyebrow="PRICE" title="Chart"/><p className="chart-note">{chart?.error || "No chart data in the feed yet."}</p></Panel>;
+  const days = chartRanges.find(([label]) => label === range)?.[1] ?? 260;
+  const cut = (k: string) => (chart[k] as (number | null)[]).slice(-days);
+  const dates = (chart.d as string[]).slice(-days);
+  const buy = n(levels?.buy_below);
+  return (
+    <Panel>
+      <PanelTitle eyebrow="PRICE · DAILY CLOSE" title="Trend" action={<div className="segmented">{chartRanges.map(([label]) => <button key={label} className={range === label ? "active" : ""} onClick={() => setRange(label)}>{label}</button>)}</div>}/>
+      <SeriesChart dates={dates} height={240} format={(v) => format(v)}
+        series={[
+          { label: "Close", color: "#e6e7ea", values: cut("close") },
+          { label: "50-day average", color: "var(--amber)", values: cut("sma50") },
+          { label: "200-day average", color: "#5b9cf5", values: cut("sma200") },
+        ]}
+        refs={buy !== null && buy > Math.min(...(cut("close").filter((v) => v !== null) as number[])) * 0.85 ? [{ label: "Buy below", value: buy, color: "var(--green)" }] : []}/>
+      <p className="mini-label">RSI (14) · 30 oversold, 70 overbought</p>
+      <SeriesChart dates={dates} height={64} format={(v) => v.toFixed(0)} fixedRange={[0, 100]} compactAxis
+        series={[{ label: "RSI", color: "#b58cf0", values: cut("rsi") }]}
+        refs={[{ label: "70", value: 70, color: "#5a5c62" }, { label: "30", value: 30, color: "#5a5c62" }]}/>
+    </Panel>
+  );
+}
+
+function DcfPanel({ dcf, format }: { dcf: FeedResearch; format: (v: unknown) => string }) {
+  if (!dcf.ok) return <Panel><PanelTitle eyebrow="DCF VALUATION" title="Not available"/><p className="chart-note">{dcf.reason || "Free-cash-flow data was missing."}</p></Panel>;
+  const sc = dcf.scenarios ?? {};
+  const marks = ([
+    { label: "Bear", value: sc.bear }, { label: "Base", value: sc.base ?? dcf.intrinsic_value }, { label: "Bull", value: sc.bull }, { label: "Price", value: dcf.price },
+  ] as { label: string; value: unknown }[]).filter((m) => n(m.value) !== null) as { label: string; value: number }[];
+  const lo = Math.min(...marks.map((m) => m.value)) * 0.92;
+  const hi = Math.max(...marks.map((m) => m.value)) * 1.05;
+  const pos = (v: number) => ((v - lo) / (hi - lo || 1)) * 100;
+  const mos = n(dcf.margin_of_safety);
+  const pctOf = (x: unknown, digits: number) => (n(x) === null ? "—" : `${((x as number) * 100).toFixed(digits)}%`);
+  return (
+    <Panel>
+      <PanelTitle eyebrow="DCF VALUATION" title={format(dcf.intrinsic_value)} action={mos !== null ? <span className={mos >= 0 ? "gain" : "gain loss"}>{pct(mos * 100, 0)} margin</span> : undefined}/>
+      {dcf.financial && <p className="caveat">Financial company: free cash flow is distorted by lending or float, so this DCF is for reference only and is left out of the house view.</p>}
+      <div className="scenario-ladder" aria-label="Bear, base and bull values against the price">
+        {n(sc.bear) !== null && n(sc.bull) !== null && <i style={{ left: `${pos(sc.bear)}%`, right: `${100 - pos(sc.bull)}%` }}/>}
+        {marks.map((m) => <span key={m.label} className={m.label.toLowerCase()} style={{ left: `${pos(m.value)}%` }}><b>{m.label}</b>{format(m.value)}</span>)}
+      </div>
+      <div className="stat-list">
+        <Stat label="Discount rate (WACC)" value={pctOf(dcf.wacc, 1)}/>
+        <Stat label="Growth, years 1–5" value={pctOf(dcf.stage1_growth, 1)} hint="Fades to terminal over years 6–10"/>
+        <Stat label="Terminal growth" value={pctOf(dcf.terminal_growth, 1)}/>
+        <Stat label="Terminal value share" value={pctOf(dcf.terminal_share, 0)} warn={(n(dcf.terminal_share) ?? 0) > 0.75}/>
+      </div>
+      {!!dcf.caveats?.length && <ul className="note-list">{(dcf.caveats as string[]).map((c, i) => <li key={i}>{c}</li>)}</ul>}
+    </Panel>
+  );
+}
+
+const componentLabels: Record<string, string> = { valuation: "Valuation", moat: "Moat", stability: "Stability", sentiment: "Sentiment", technical: "Technical" };
+const componentWeights: Record<string, number> = { valuation: 35, moat: 20, stability: 10, sentiment: 15, technical: 20 };
+
+function HouseViewPanel({ hv, format }: { hv: FeedResearch; format: (v: unknown) => string }) {
+  const comps = Object.entries(hv.components ?? {}).filter(([, v]) => n(v) !== null) as [string, number][];
+  const lv = hv.levels;
+  return (
+    <Panel>
+      <PanelTitle eyebrow="HOUSE VIEW" title={<em className={`${actionClass(hv.action)} big`}>{hv.action || "—"}</em>} action={<span className="score-pill">{fixed(hv.score, 0)}<small>/100</small></span>}/>
+      <div className="factor-list tight">
+        {comps.map(([k, v]) => (
+          <div key={k}>
+            <span><b>{componentLabels[k] ?? k}</b><small>{componentWeights[k] ? `${componentWeights[k]}% weight` : ""}</small></span>
+            <i><b style={{ width: `${Math.max(0, Math.min(100, v))}%` }} className={v >= 60 ? "good" : v < 40 ? "bad" : ""}/></i>
+            <em>{v.toFixed(0)}</em>
+          </div>
+        ))}
+      </div>
+      {lv && (n(lv.buy_below) !== null || n(lv.trim_above) !== null) ? (
+        <div className="levels">
+          <div><span>Buy below</span><b className="up">{format(lv.buy_below)}</b></div>
+          <div><span>Fair value</span><b>{format(lv.fair_value)}</b></div>
+          <div><span>Trim above</span><b className="down">{format(lv.trim_above)}</b></div>
+        </div>
+      ) : <p className="chart-note">No price levels: the DCF isn't used for this company.</p>}
+      <small className="footnote">Buy ≥ 68 · Accumulate ≥ 58 · Hold ≥ 45 · Trim ≥ 35 · else Sell.</small>
+    </Panel>
+  );
+}
+
+function MoatPanel({ moat }: { moat: FeedResearch }) {
+  const factors = (moat.factors ?? []) as { factor: string; score: number; detail: string }[];
+  return (
+    <Panel>
+      <PanelTitle eyebrow="ECONOMIC MOAT" title={`${moat.moat_rating || "—"} moat`} action={<span className="score-pill">{fixed(moat.moat_score, 0)}<small>/100</small></span>}/>
+      <div className="factor-list">
+        {factors.map((f) => (
+          <div key={f.factor}>
+            <span><b>{f.factor}</b><small>{f.detail}</small></span>
+            <i><b style={{ width: `${Math.max(0, Math.min(100, f.score))}%` }} className={f.score >= 60 ? "good" : f.score < 40 ? "bad" : ""}/></i>
+            <em>{f.score.toFixed(0)}</em>
+          </div>
+        ))}
+        {!factors.length && <p className="chart-note">No moat factors were computed.</p>}
+      </div>
+    </Panel>
+  );
+}
+
+function SentimentPanel({ s }: { s: FeedResearch }) {
+  const docs = (s.documents ?? []) as FeedResearch[];
+  return (
+    <Panel>
+      <PanelTitle eyebrow="MANAGEMENT SENTIMENT" title={s.label || "—"} action={<span className="score-pill">{fixed(s.management_confidence, 0)}<small>/100</small></span>}/>
+      {docs.length ? (
+        <div className="doc-list">
+          {docs.map((d, i) => (
+            <div key={i}>
+              <div className="doc-head">
+                <b>{d.source}</b><small>{d.date || ""}{n(d.words) !== null ? ` · ${compact(d.words)} words` : ""}</small>
+                <span>Confidence <b>{fixed(d.confidence, 0)}</b></span>
+                <span>Tone <b className={tone(d.net_tone)}>{fixed(d.net_tone, 2)}</b></span>
+                {n(d.confidence_change) !== null && <span>vs prior year <b className={tone(d.confidence_change)}>{d.confidence_change > 0 ? "+" : ""}{d.confidence_change.toFixed(1)}</b></span>}
+              </div>
+              {d.evidence?.positive?.[0] && <p className="quote up-quote">“{String(d.evidence.positive[0]).slice(0, 220)}”</p>}
+              {d.evidence?.negative?.[0] && <p className="quote down-quote">“{String(d.evidence.negative[0]).slice(0, 220)}”</p>}
+            </div>
+          ))}
+        </div>
+      ) : <p className="chart-note">{s.reason || "No filings or news were scored."}</p>}
+      <small className="footnote">Lexicon read of 10-K MD&A, earnings releases and news. 50 is neutral.</small>
+    </Panel>
+  );
+}
+
+/* ---------------------------------------------------------------- shared */
+
+function Stat({ label, value, hint, warn }: { label: string; value: ReactNode; hint?: string; warn?: boolean }) {
+  return (
+    <div className="stat-row">
+      <span>{label}{hint && <small>{hint}</small>}</span>
+      <b className={warn ? "warn" : ""}>{value}</b>
+    </div>
+  );
+}
+
+function Markdown({ text }: { text: string }) {
+  const bold = (line: string) => line.replace(/<[^>]*>/g, "").split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
   const blocks: ReactNode[] = [];
   let list: string[] = [];
   const flush = () => {
     if (list.length) blocks.push(<ul key={blocks.length}>{list.map((item, i) => <li key={i}>{bold(item)}</li>)}</ul>);
     list = [];
   };
-  for (const line of lines) {
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) { flush(); continue; }
     if (/^[-*] /.test(line)) { list.push(line.slice(2)); continue; }
     flush();
     if (line.startsWith("#")) blocks.push(<h3 key={blocks.length}>{line.replace(/^#+\s*/, "")}</h3>);
-    else if (!/^\*\*.*\*\*$/.test(line) || line.replace(/\*/g, "") !== briefing.headline) blocks.push(<p key={blocks.length}>{bold(line)}</p>);
+    else blocks.push(<p key={blocks.length}>{bold(line)}</p>);
   }
   flush();
-  const generated = briefing.generatedAt ? new Date(briefing.generatedAt) : null;
-  return (
-    <Panel className="briefing-panel">
-      <PanelTitle eyebrow={`MORNING BRIEFING · ${parseDateKey(briefing.d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}${generated && !isNaN(+generated) ? ` · ${timeLabel(generated)}` : ""}`}
-        title={briefing.headline || "Daily report"}
-        action={briefing.link ? <a className="text-button" href={briefing.link} target="_blank" rel="noreferrer"><Icon name="external" size={14}/> Open doc</a> : undefined}/>
-      <div className="briefing-movers">
-        {briefing.winners && <div><span>Winners</span><p className="up">{briefing.winners}</p></div>}
-        {briefing.losers && <div><span>Losers</span><p className="down">{briefing.losers}</p></div>}
-      </div>
-      {open && <div className="briefing-body">{blocks}</div>}
-      <button className="text-button" onClick={() => setOpen(!open)}>{open ? "Hide full briefing" : "Read full briefing"}</button>
-    </Panel>
-  );
+  return <div className="markdown">{blocks}</div>;
 }
 
-type CalcInputs = { eps: string; growth: string; bondYield: string; discount: string; terminal: string; years: string };
+type Series = { label: string; color: string; values: (number | null)[]; area?: boolean; dashed?: boolean };
 
-function IntrinsicCalculator({ holding, money, onApply }: { holding: Holding; money: Money; onApply: (value: number) => void }) {
-  const [method, setMethod] = useStored<"graham" | "dcf">("calc.method", "dcf");
-  const [inputs, setInputs] = useStored<CalcInputs>("calc.inputs", { eps: "5.00", growth: "10", bondYield: "4.5", discount: "9", terminal: "3", years: "10" });
-  const set = (field: keyof CalcInputs) => (event: ChangeEvent<HTMLInputElement>) => setInputs({ ...inputs, [field]: event.target.value });
-
-  const value = useMemo(() => {
-    const eps = num(inputs.eps);
-    const g = num(inputs.growth) / 100;
-    if (eps <= 0) return 0;
-    if (method === "graham") {
-      const y = num(inputs.bondYield);
-      return y > 0 ? (eps * (8.5 + 2 * g * 100) * 4.4) / y : 0;
-    }
-    const r = num(inputs.discount) / 100;
-    const tg = num(inputs.terminal) / 100;
-    const years = Math.min(Math.max(Math.round(num(inputs.years)), 1), 30);
-    if (r <= tg) return 0;
-    let total = 0;
-    let cash = eps;
-    for (let year = 1; year <= years; year++) {
-      cash *= 1 + g;
-      total += cash / (1 + r) ** year;
-    }
-    total += (cash * (1 + tg)) / (r - tg) / (1 + r) ** years;
-    return total;
-  }, [inputs, method]);
-
-  const upside = value && holding.price ? (value / holding.price - 1) * 100 : null;
-
+// Line chart with a hover crosshair and tooltip; gaps (null) break the line.
+function SeriesChart({ dates, series, refs = [], format, height = 220, fixedRange, compactAxis = false }: {
+  dates: string[]; series: Series[]; refs?: { label: string; value: number; color: string }[]; format: (v: number) => string; height?: number;
+  fixedRange?: [number, number]; compactAxis?: boolean;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const W = 700;
+  const all = [...series.flatMap((s) => s.values.filter((v): v is number => v !== null)), ...refs.map((r) => r.value)];
+  let [lo, hi] = fixedRange ?? [Math.min(...all), Math.max(...all)];
+  if (!fixedRange) {
+    const pad = (hi - lo || Math.abs(hi) || 1) * 0.08;
+    lo -= pad;
+    hi += pad;
+  }
+  const x = (i: number) => (i / Math.max(dates.length - 1, 1)) * W;
+  const y = (v: number) => height - ((v - lo) / (hi - lo || 1)) * height;
+  const path = (values: (number | null)[]) => {
+    let d = "";
+    let pen = false;
+    values.forEach((v, i) => {
+      if (v === null) { pen = false; return; }
+      d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+      pen = true;
+    });
+    return d;
+  };
+  const move = (event: PointerEvent) => {
+    const rect = box.current?.getBoundingClientRect();
+    if (!rect) return;
+    setHover(Math.max(0, Math.min(dates.length - 1, Math.round(((event.clientX - rect.left) / rect.width) * (dates.length - 1)))));
+  };
+  const left = hover === null ? 0 : (hover / Math.max(dates.length - 1, 1)) * 100;
+  const shown = refs.filter((r) => r.value >= lo && r.value <= hi);
+  const at = (s: Series) => (hover === null ? null : s.values[hover] ?? null);
   return (
-    <Panel className="calculator">
-      <PanelTitle eyebrow="INTRINSIC VALUE" title="Valuation Calculator" action={
-        <div className="segmented">
-          <button className={method === "dcf" ? "active" : ""} onClick={() => setMethod("dcf")}>DCF</button>
-          <button className={method === "graham" ? "active" : ""} onClick={() => setMethod("graham")}>Graham</button>
+    <div className={`series-chart ${compactAxis ? "compact" : ""}`}>
+      {!compactAxis && series.length > 1 && (
+        <div className="chart-legend">{series.map((s) => <span key={s.label}><i style={{ background: s.color }} className={s.dashed ? "dashed" : ""}/>{s.label}</span>)}</div>
+      )}
+      <div className="chart-body">
+        <div className="chart-axis"><span>{format(hi)}</span><span>{format(lo)}</span></div>
+        <div className="chart-plot" ref={box} onPointerMove={move} onPointerLeave={() => setHover(null)} style={{ height }}>
+          <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none" role="img" aria-label={`${series.map((s) => s.label).join(", ")} over time`}>
+            {[0.25, 0.5, 0.75].map((f) => <line key={f} x1="0" x2={W} y1={height * f} y2={height * f} stroke="var(--line)" vectorEffect="non-scaling-stroke"/>)}
+            {shown.map((r) => <line key={r.label} x1="0" x2={W} y1={y(r.value)} y2={y(r.value)} stroke={r.color} strokeDasharray="5 5" strokeWidth="1.2" vectorEffect="non-scaling-stroke"/>)}
+            {series.filter((s) => s.area).map((s) => {
+              const start = s.values.findIndex((v) => v !== null);
+              return <path key={`${s.label}-area`} d={`${path(s.values)}L${x(s.values.length - 1)},${height}L${x(Math.max(start, 0))},${height}Z`} fill={s.color} opacity=".08"/>;
+            })}
+            {series.map((s) => <path key={s.label} d={path(s.values)} fill="none" stroke={s.color} strokeWidth="2" strokeDasharray={s.dashed ? "6 5" : undefined} vectorEffect="non-scaling-stroke"/>)}
+          </svg>
+          {!compactAxis && shown.map((r) => (
+            <span key={r.label} className="ref-label" style={{ top: `${(y(r.value) / height) * 100}%`, color: r.color }}>{r.label} {format(r.value)}</span>
+          ))}
+          {hover !== null && (
+            <>
+              <div className="crosshair" style={{ left: `${left}%` }}/>
+              {series.map((s) => at(s) !== null && <i key={s.label} className="hover-dot" style={{ left: `${left}%`, top: `${(y(at(s)!) / height) * 100}%`, background: s.color }}/>)}
+              <div className={`chart-tip ${left > 60 ? "flip" : ""}`} style={{ left: `${left}%` }}>
+                <small>{shortDate(dates[hover])}</small>
+                {series.map((s) => at(s) !== null && <span key={s.label}><i style={{ background: s.color }}/>{s.label}<b>{format(at(s)!)}</b></span>)}
+              </div>
+            </>
+          )}
         </div>
-      }/>
-      <div className="calc-fields">
-        <label>{method === "dcf" ? "Free cash flow / share" : "EPS (trailing 12m)"}<input inputMode="decimal" value={inputs.eps} onChange={set("eps")}/></label>
-        <label>Growth rate %<input inputMode="decimal" value={inputs.growth} onChange={set("growth")}/></label>
-        {method === "dcf" ? (
-          <>
-            <label>Discount rate %<input inputMode="decimal" value={inputs.discount} onChange={set("discount")}/></label>
-            <label>Terminal growth %<input inputMode="decimal" value={inputs.terminal} onChange={set("terminal")}/></label>
-            <label>Years of growth<input inputMode="numeric" value={inputs.years} onChange={set("years")}/></label>
-          </>
-        ) : (
-          <label>AAA bond yield %<input inputMode="decimal" value={inputs.bondYield} onChange={set("bondYield")}/></label>
-        )}
       </div>
-      <div className="calc-result">
-        <div>
-          <span>Estimated intrinsic value</span>
-          <strong>{value ? money(value) : "—"}</strong>
-          {upside !== null && <em className={upside >= 0 ? "up" : "down"}>{pct(upside, 1)} vs {holding.symbol} at {money(holding.price)}</em>}
-        </div>
-        <button className="primary-button" disabled={!value} onClick={() => onApply(value)}>Apply to {holding.symbol}</button>
-      </div>
-      <small className="footnote">
-        {method === "dcf"
-          ? "Discounts each year's cash flow plus a terminal value back to today."
-          : "Benjamin Graham's revised formula: V = EPS × (8.5 + 2g) × 4.4 / Y."}{" "}
-        Estimates only, not financial advice.
-      </small>
-    </Panel>
+      {!compactAxis && <div className="chart-dates"><span>{shortDate(dates[0])}</span><span>{shortDate(dates[dates.length - 1])}</span></div>}
+    </div>
   );
 }
