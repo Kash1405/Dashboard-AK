@@ -6,15 +6,16 @@ import {
   HOLDING_COLUMNS, ledgerIdFrom, ledgerUrl, queueRequest, quickQuote, saveLedgerInputs, useLedgerData, useLedgerSettings, useLedgerStatus,
   type Briefing, type CashInput, type FeedPosition, type FeedResearch, type FeedSummary, type HoldingInput, type JimNote, type LedgerRequest, type NavPoint, type QuickQuote,
 } from "../lib/ledger";
-import { runnerMessage, startRequests, useGithubSettings } from "../lib/maoJobs";
+import { runnerMessage, startRequests, useClaudeStatus, type ClaudeStatus } from "../lib/maoJobs";
 import { googleJson, refreshLedger, useSyncMeta } from "../lib/sync";
 import { dateKey, downloadFile, parseDateKey, pct, timeLabel } from "../lib/utils";
 
 // The Investments tab shows the MAO equity research system. Everything comes from the MAO Ledger
 // sheet. Nothing runs on a timer: Refresh queues a run that updates prices, NAV history, the
 // "Dashboard Feed" (research per holding) and desk notes; Generate briefing writes the briefing; and
-// searching a stock queues its research. The page writes only the ledger's Holdings and Cash tabs and
-// its Requests queue (see lib/maoJobs.ts).
+// searching a stock queues its research. The MAO server on this Mac runs them with Claude, so the
+// page is locked (with a banner saying why) unless Claude is running. The page writes only the
+// ledger's Holdings and Cash tabs and its Requests queue (see lib/maoJobs.ts).
 
 type Money = ReturnType<typeof useMoney>;
 type View = "Summary" | "Holdings" | "Research";
@@ -46,6 +47,9 @@ export default function Investments() {
   const summary = data?.feed?.summary ?? null;
   const active: View = views.some((v) => v.view === view) ? view : "Summary";
   const pending = openRequests(data?.requests);
+  const claude = useClaudeStatus();
+  const locked = claude.state !== "ready";
+  const canRun = drive.enabled && !locked;
 
   // While anything is queued, re-read the ledger every 30 seconds so results appear by themselves.
   useEffect(() => {
@@ -57,12 +61,14 @@ export default function Investments() {
     if (!pending.length) setJob((j) => (j && !j.error ? null : j));
   }, [pending.length]);
 
-  // Queue work in the ledger, then start whatever can run it (GitHub Actions or the local server).
+  // Queue work in the ledger, then have Claude on this Mac (through the MAO server) run it now.
   const request = async (type: "refresh" | "research" | "briefing", ticker: string, what: string) => {
+    if (locked) return;
     setJob({ message: "Adding the request to the ledger…" });
     try {
       await queueRequest(googleJson, type, ticker);
-      setJob({ message: runnerMessage(await startRequests(), what) });
+      await startRequests();
+      setJob({ message: runnerMessage(what) });
     } catch (error) {
       setJob({ error: true, message: error instanceof Error ? error.message : "Couldn't queue the request." });
     }
@@ -79,14 +85,16 @@ export default function Investments() {
           <p>Portfolio, holdings and research from the automated equity desk, updated when you press Refresh.</p>
         </div>
         <div className="welcome-actions">
-          <button className="secondary-button" onClick={() => request("refresh", "", "Refresh started: prices, research and desk notes.")} disabled={!drive.enabled}
+          <button className="secondary-button" onClick={() => request("refresh", "", "Refresh started: prices, research and desk notes.")} disabled={!canRun}
             title="Update prices, NAV history, research and desk notes, then reload the ledger">
             <Icon name="refresh" size={14}/> {pending.some((r) => r.type === "refresh") ? "Refreshing…" : "Refresh"}
           </button>
-          <button className="primary-button" onClick={() => request("briefing", "", "Briefing requested.")} disabled={!drive.enabled}><Icon name="play" size={14}/> Generate briefing</button>
+          <button className="primary-button" onClick={() => request("briefing", "", "Briefing requested.")} disabled={!canRun}><Icon name="play" size={14}/> Generate briefing</button>
           <button className="icon-button" onClick={() => setShowSettings(!showSettings)} aria-label="Investment settings" title="Investment settings"><Icon name="key" size={15}/></button>
         </div>
       </div>
+
+      <ClaudeBanner status={claude}/>
 
       {showSettings && <LedgerSettings onClose={() => setShowSettings(false)}/>}
 
@@ -100,6 +108,7 @@ export default function Investments() {
           : "The ledger has no research feed yet. Press Refresh to build it."}
       </p>
 
+      <div className={locked ? "inv-locked" : ""} inert={locked} aria-hidden={locked}>
       <nav className="inv-tabs" aria-label="Investment views">
         {views.map(({ view: v, icon, blurb }) => (
           <button key={v} className={active === v ? "active" : ""} onClick={() => setView(v)} aria-pressed={active === v}>
@@ -115,7 +124,7 @@ export default function Investments() {
         </Panel>
       ) : active === "Summary" ? (
         <SummaryView summary={summary} history={data?.history ?? []} briefing={data?.briefing ?? null} portfolioNote={data?.notes._PORTFOLIO} money={money}
-          onGenerate={() => request("briefing", "", "Briefing requested.")} busy={!drive.enabled}/>
+          onGenerate={() => request("briefing", "", "Briefing requested.")} busy={!canRun}/>
       ) : active === "Holdings" ? (
         <HoldingsView summary={summary} research={data?.feed?.research ?? {}} inputs={data?.inputs} money={money}
           onSaved={() => request("refresh", "", "Holdings saved.")}/>
@@ -123,7 +132,29 @@ export default function Investments() {
         <ResearchView summary={summary} research={data?.feed?.research ?? {}} notes={data?.notes ?? {}} requests={data?.requests ?? []} money={money}
           onResearch={(ticker) => request("research", ticker, `${ticker} research requested.`)}/>
       )}
+      </div>
     </main>
+  );
+}
+
+// Says whether Claude is running on this Mac; the page is locked until it is.
+function ClaudeBanner({ status }: { status: ClaudeStatus }) {
+  if (status.state === "ready") {
+    return (
+      <div className="claude-banner ready" role="status">
+        <Icon name="check" size={15}/>
+        <p><b>Claude is running on this Mac.</b> Refresh, Generate briefing and stock searches run now.{status.running ? " A run is in progress." : ""}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="claude-banner" role="alert">
+      <Icon name="lock" size={15}/>
+      <p>
+        <b>{status.state === "checking" ? "Checking for Claude on this Mac…" : "Investment Control works only while Claude is running."}</b>{" "}
+        {status.state === "checking" ? "" : <>{status.detail} {status.state === "offline" && <>Start it with <code>scripts/install_server.sh</code> in the MAO folder. </>}This page checks again every 15 seconds.</>}
+      </p>
+    </div>
   );
 }
 
@@ -133,7 +164,6 @@ const openRequests = (requests: LedgerRequest[] = []) =>
 
 function LedgerSettings({ onClose }: { onClose: () => void }) {
   const [ledger, setLedger] = useLedgerSettings();
-  const [github, setGithub] = useGithubSettings();
   return (
     <>
     <Panel className="connect-panel">
@@ -142,6 +172,7 @@ function LedgerSettings({ onClose }: { onClose: () => void }) {
         <h2>Where the data comes from</h2>
         <p>
           The MAO Ledger in your Automated Equity Valuation folder is read when you open the dashboard, after you press Refresh, and while a request is running.
+          Jobs run on this Mac through the MAO server and Claude; the page is locked while Claude isn't running.
           Change holdings and cash in the ledger's Holdings and Cash tabs; the next update picks them up.
         </p>
       </div>
@@ -151,25 +182,6 @@ function LedgerSettings({ onClose }: { onClose: () => void }) {
           <button className="primary-button" onClick={() => { setLedger({ ...ledger, enabled: true }); refreshLedger(); onClose(); }} disabled={!ledger.id}>Read ledger now</button>
           {ledger.id && <a className="text-button" href={ledgerUrl(ledger.id)} target="_blank" rel="noreferrer">Open ledger</a>}
           <a className="text-button" href={FOLDER_URL} target="_blank" rel="noreferrer">Open Drive folder</a>
-        </div>
-      </div>
-    </Panel>
-    <Panel className="connect-panel">
-      <div>
-        <p className="eyebrow red">GITHUB ACTIONS · OPTIONAL</p>
-        <h2>Run requests right away</h2>
-        <p>
-          Refresh, briefings, holdings edits and stock searches are queued in the ledger and run by GitHub Actions; nothing runs on a timer.
-          For them to run, paste a fine-grained GitHub token limited to the <b>{github.repo}</b> repository
-          with only <b>Actions: read and write</b> permission. It's stored in this browser only; add it on each device you use.
-        </p>
-      </div>
-      <div className="connect-form">
-        <label className="wide">GitHub token<input type="password" value={github.token} onChange={(event) => setGithub({ ...github, token: event.target.value.trim() })} placeholder="github_pat_…" autoComplete="off"/></label>
-        <div className="connect-buttons">
-          <a className="text-button" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create a token</a>
-          {github.token && <button className="secondary-button" onClick={() => setGithub({ ...github, token: "" })}>Remove token</button>}
-          <button className="secondary-button" onClick={onClose}>Close</button>
         </div>
       </div>
     </Panel>

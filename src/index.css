@@ -1020,6 +1020,13 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 @media (hover: none) { .sudoku-keys { display: none; } }
 
 /* Investments: MAO research views */
+.claude-banner { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px; padding: 12px 14px; border: 1px solid rgba(242,56,43,.45); border-left: 3px solid var(--red); background: rgba(242,56,43,.08); color: #d6d7d9; font-size: 13.5px; }
+.claude-banner svg { flex: none; margin-top: 2px; color: var(--red); }
+.claude-banner p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.claude-banner code { font-size: 12.5px; background: #0d0e10; padding: 1px 5px; }
+.claude-banner.ready { border-color: rgba(69,211,159,.35); border-left-color: var(--green); background: rgba(69,211,159,.06); }
+.claude-banner.ready svg { color: var(--green); }
+.inv-locked { opacity: .35; filter: grayscale(.6); pointer-events: none; user-select: none; }
 .inv-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
 .inv-tabs button { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); background: var(--panel); color: #8a8c91; text-align: left; cursor: pointer; border-radius: 5px; }
 .inv-tabs button span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
