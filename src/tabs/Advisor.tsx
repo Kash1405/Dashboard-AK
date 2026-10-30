@@ -20,24 +20,31 @@ const ratingDefs = [
 type RatingKey = (typeof ratingDefs)[number]["key"];
 type Ratings = Record<RatingKey, number>;
 type Entry = { date: string; ratings: Ratings; text: string; savedAt: string };
-type Draft = { date: string; ratings: Ratings; text: string };
+type Draft = { date: string; ratings: Ratings; text: string; basedOn?: string }; // basedOn: savedAt of the entry it was loaded from
 
 const defaultRatings: Ratings = { mood: 5, energy: 5, anxiety: 5, sleep: 5, focus: 5, motivation: 5 };
 const prompts = ["One thing I'm grateful for:", "A small win today:", "What I need right now:", "Something I'm letting go of:"];
 
 export default function Advisor() {
-  const today = dateKey();
+  const today = dateKey(useNow(60000));
   const [entries, setEntries] = useStored<Record<string, Entry>>("wellness.entries", {});
   const [draft, setDraft] = useStored<Draft>("wellness.draft", { date: today, ratings: defaultRatings, text: "" });
-
-  // Start a fresh check-in each day (pre-filled from today's saved entry if there is one).
-  useEffect(() => {
-    if (draft.date !== today) setDraft({ date: today, ratings: entries[today]?.ratings ?? defaultRatings, text: entries[today]?.text ?? "" });
-  }, [today, draft.date, entries, setDraft]);
-
   const saved = entries[today];
+
+  // Start a fresh check-in each day, and reload the form whenever today's saved entry changes
+  // underneath it (synced in from Drive or another device), so the form never shows stale values.
+  useEffect(() => {
+    if (draft.date !== today || (saved?.savedAt ?? "") !== (draft.basedOn ?? "")) {
+      setDraft({ date: today, ratings: saved?.ratings ?? defaultRatings, text: saved?.text ?? "", basedOn: saved?.savedAt });
+    }
+  }, [today, draft.date, draft.basedOn, saved, setDraft]);
+
   const dirty = !saved || saved.text !== draft.text.trim() || ratingDefs.some((r) => saved.ratings[r.key] !== draft.ratings[r.key]);
-  const save = () => setEntries({ ...entries, [today]: { date: today, ratings: draft.ratings, text: draft.text.trim(), savedAt: new Date().toISOString() } });
+  const save = () => {
+    const savedAt = new Date().toISOString();
+    setDraft({ ...draft, basedOn: savedAt });
+    setEntries({ ...entries, [today]: { date: today, ratings: draft.ratings, text: draft.text.trim(), savedAt } });
+  };
   const addPrompt = (prompt: string) => setDraft({ ...draft, text: `${draft.text}${draft.text && !draft.text.endsWith("\n") ? "\n" : ""}${prompt} ` });
   const { current, longest } = streaks(entries, today);
 
