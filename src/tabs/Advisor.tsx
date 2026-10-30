@@ -4,8 +4,8 @@ import { useStored } from "../lib/store";
 import { currentBlock } from "../lib/schedule";
 import { addDays, dateKey, parseDateKey, relativeDay, timeLabel, uid, useNow } from "../lib/utils";
 import {
-  useMealLog, useMeals, useMedLog, useMeds, useSchedule, useTracker, useTrackerLog,
-  type MealRow, type MedRow, type TrackerCategory,
+  useMealLog, useMeals, useMedLog, useMeds, useSchedule,
+  type MealRow, type MedRow,
 } from "../lib/vault";
 
 const ratingDefs = [
@@ -76,7 +76,6 @@ export default function Advisor() {
             </div>
           </Panel>
 
-          <DailyTracker/>
           <PastReflections entries={entries} today={today}/>
         </div>
 
@@ -237,99 +236,6 @@ function TodaysMeds() {
         <div className="adherence">
           <span>7 DAY ADHERENCE <b>{adherence === null ? "—" : `${adherence}%`}</b></span>
           <i><b style={{ width: `${adherence ?? 0}%` }}/></i>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-// ---------- Daily tracker ----------
-
-function DailyTracker() {
-  const today = dateKey();
-  const [day, setDay] = useState(today);
-  const [categories, setCategories] = useTracker();
-  const [log, setLog] = useTrackerLog();
-  const [editing, setEditing] = useState(false);
-  const entry = log[day] ?? {};
-
-  const setItem = (id: string, patch: Partial<{ done: boolean; note: string }>) => {
-    const current = entry[id] ?? { done: false, note: "" };
-    setLog({ ...log, [day]: { ...entry, [id]: { ...current, ...patch } } });
-  };
-  const updateCategory = (id: string, change: (c: TrackerCategory) => TrackerCategory) => setCategories(categories.map((c) => (c.id === id ? change(c) : c)));
-  const shift = (n: number) => {
-    const next = dateKey(addDays(parseDateKey(day), n));
-    if (next <= today) setDay(next);
-  };
-  const history = Array.from({ length: 14 }, (_, i) => dateKey(addDays(parseDateKey(today), i - 13)));
-  // A domain counts as done for the day as soon as any one of its items is ticked.
-  const domainDone = (date: string, category: TrackerCategory) => category.items.some((item) => log[date]?.[item.id]?.done);
-  const total = categories.length;
-  const done = categories.filter((c) => domainDone(day, c)).length;
-
-  return (
-    <Panel className="tracker-card">
-      <PanelTitle eyebrow="DAILY TRACKER" title="Learning · Work · Health" action={
-        <div className="tracker-head">
-          <div className="month-arrows">
-            <button onClick={() => shift(-1)} aria-label="Previous day">‹</button>
-            <button className="today-button" onClick={() => setDay(today)}>{relativeDay(parseDateKey(day))}</button>
-            <button onClick={() => shift(1)} aria-label="Next day" disabled={day === today}>›</button>
-          </div>
-          <button className={`text-button ${editing ? "strong" : ""}`} onClick={() => setEditing(!editing)}><Icon name={editing ? "check" : "edit"} size={14}/> {editing ? "Done" : "Edit items"}</button>
-        </div>
-      }/>
-      <div className={`tracker-total ${total && done === total ? "all" : ""}`}><span>{done} of {total} domains</span><i><b style={{ width: `${total ? (done / total) * 100 : 0}%` }}/></i></div>
-      <div className="tracker-grid">
-        {categories.map((category) => {
-          const complete = domainDone(day, category);
-          return (
-            <div className={`tracker-cat ${complete ? "complete" : ""}`} key={category.id}>
-              <div className="tracker-cat-head">
-                {editing
-                  ? <input value={category.name} onChange={(e) => updateCategory(category.id, (c) => ({ ...c, name: e.target.value }))} aria-label="Category name"/>
-                  : <h3>{category.name}</h3>}
-                {!editing && <span className="domain-badge">{complete ? <><Icon name="check" size={12}/> Done</> : "—"}</span>}
-                {editing && <button className="row-delete" onClick={() => window.confirm(`Remove the “${category.name}” category?`) && setCategories(categories.filter((c) => c.id !== category.id))} aria-label={`Remove ${category.name}`}><Icon name="trash" size={13}/></button>}
-              </div>
-              {category.items.map((item) => {
-                const state = entry[item.id] ?? { done: false, note: "" };
-                return (
-                  <div className={`tracker-item ${state.done ? "done" : ""}`} key={item.id}>
-                    {editing ? (
-                      <>
-                        <input className="item-name" value={item.label} aria-label="Item name" onChange={(e) => updateCategory(category.id, (c) => ({ ...c, items: c.items.map((it) => (it.id === item.id ? { ...it, label: e.target.value } : it)) }))}/>
-                        <button className="row-delete" onClick={() => updateCategory(category.id, (c) => ({ ...c, items: c.items.filter((it) => it.id !== item.id) }))} aria-label={`Remove ${item.label}`}><Icon name="x" size={13}/></button>
-                      </>
-                    ) : (
-                      <>
-                        <button className="checkbox" onClick={() => setItem(item.id, { done: !state.done })} aria-label={`${state.done ? "Uncheck" : "Check"} ${item.label}`}>{state.done && <Icon name="check" size={12}/>}</button>
-                        <span className="task-name" onClick={() => setItem(item.id, { done: !state.done })}>{item.label}</span>
-                        <input className="item-note" value={state.note} onChange={(e) => setItem(item.id, { note: e.target.value })} placeholder="note / hrs" aria-label={`${item.label} note`}/>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-              {editing && <button className="table-add small" onClick={() => updateCategory(category.id, (c) => ({ ...c, items: [...c.items, { id: uid(), label: "New item" }] }))}><Icon name="plus" size={13}/> Add item</button>}
-            </div>
-          );
-        })}
-      </div>
-      {editing && <button className="table-add" onClick={() => setCategories([...categories, { id: uid(), name: "New category", items: [] }])}><Icon name="plus" size={14}/> Add category</button>}
-      {!editing && categories.length > 0 && (
-        <div className="tracker-history" aria-label="Last 14 days">
-          <div className="history-row labels"><span/>{history.map((d) => <em key={d} className={d === day ? "sel" : ""}>{parseDateKey(d).getDate()}</em>)}</div>
-          {categories.map((category) => (
-            <div className="history-row" key={category.id}>
-              <span>{category.name}</span>
-              {history.map((d) => {
-                const ok = domainDone(d, category);
-                return <button key={d} onClick={() => setDay(d)} title={`${d}: ${ok ? "done" : "not done"}`} className={`${d === day ? "sel" : ""} ${ok ? "ok" : ""}`}/>;
-              })}
-            </div>
-          ))}
         </div>
       )}
     </Panel>

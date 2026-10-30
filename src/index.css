@@ -688,33 +688,6 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .glance-list li.now time { color: var(--green); }
 .glance-list i { display: block; height: 3px; background: #292b30; margin-top: 6px; }
 .glance-list i b { display: block; height: 100%; background: var(--green); }
-.tracker-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
-.tracker-head .today-button { min-width: 84px; }
-.tracker-total { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; margin: -6px 0 16px; color: #acaeb3; font-size: 13px; }
-.tracker-total i { height: 4px; background: #292b30; display: block; }
-.tracker-total b { display: block; height: 100%; background: var(--red); transition: width .3s; }
-.tracker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.tracker-cat { background: #111215; border: 1px solid #25272b; padding: 12px 14px; min-width: 0; }
-.tracker-cat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.tracker-cat-head h3 { margin: 0; flex: 1; font: 600 17px 'Play'; letter-spacing: .03em; }
-.tracker-cat-head input { flex: 1; min-width: 0; height: 30px; border: 1px solid #34363c; background: var(--field); color: white; padding: 0 8px; font: 600 15px 'Play'; }
-.tracker-cat-head span { color: #6d6f75; font-size: 13px; }
-.tracker-item { display: grid; grid-template-columns: 24px 1fr 92px; gap: 8px; align-items: center; min-height: 34px; border-bottom: 1px solid #1f2125; }
-.tracker-item:last-of-type { border-bottom: 0; }
-.tracker-item .task-name { font-size: 14px; }
-.tracker-item .checkbox { width: 17px; height: 17px; }
-.tracker-item.done .checkbox { background: var(--green); border-color: var(--green); }
-.tracker-item .item-note { height: 26px; min-width: 0; border: 1px solid #25272b; background: #0d0e10; color: #c4c5c9; padding: 0 7px; font-size: 12.5px; }
-.tracker-item .item-note::placeholder { color: #45474c; }
-.tracker-item .item-name { grid-column: 1 / 3; height: 28px; border: 1px solid #34363c; background: var(--field); color: #d6d7d9; padding: 0 8px; font-size: 14px; min-width: 0; }
-.tracker-item:has(.item-name) { grid-template-columns: 1fr 28px; }
-.tracker-history { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; overflow-x: auto; }
-.history-row { display: grid; grid-template-columns: 120px repeat(14, minmax(18px, 1fr)); gap: 4px; align-items: center; margin-bottom: 4px; }
-.history-row > span { color: #acaeb3; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.history-row > button { height: 18px; border: 1px solid transparent; background: #1d1e22; cursor: pointer; padding: 0; }
-.history-row > button.sel { border-color: white; }
-.history-row.labels em { font-style: normal; text-align: center; color: #55575c; font-size: 11.5px; }
-.history-row.labels em.sel { color: white; }
 
 @media (max-width: 1180px) {
   .goal-stats { grid-template-columns: repeat(3, 1fr); }
@@ -722,11 +695,9 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 }
 @media (max-width: 720px) {
   .goal-stats { grid-template-columns: 1fr 1fr; }
-  .tracker-grid { grid-template-columns: 1fr; }
   .search-input { width: 130px; }
   .hero-credit { top: auto; bottom: 6px; right: 20px; }
-  .tracker-head { justify-content: flex-start; }
-  .advisor-table .panel-heading, .tracker-card .panel-heading { flex-wrap: wrap; }
+  .advisor-table .panel-heading { flex-wrap: wrap; }
 }
 
 /* ---------- Drive sync chip ---------- */
@@ -798,14 +769,6 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .compact-edit textarea { grid-column: 1; }
 .compact-edit .row-delete { grid-row: 1; grid-column: 2; }
 .advisor-page .insight-card .mood-bars { height: 100px; }
-.advisor-page .tracker-grid { gap: 10px; }
-.advisor-page .tracker-cat { padding: 10px 12px; }
-.tracker-cat.complete { border-color: rgba(69,211,159,.35); box-shadow: inset 3px 0 0 var(--green); }
-.domain-badge { display: inline-flex; align-items: center; gap: 4px; color: #55575c; font-size: 12.5px; }
-.tracker-cat.complete .domain-badge { color: var(--green); font-weight: 700; }
-.tracker-total b { background: var(--green) !important; }
-.tracker-total.all span { color: var(--green); }
-.history-row > button.ok { background: var(--green); }
 
 /* ---------- Schedule progress ---------- */
 .row-progress { display: block; height: 3px; background: #292b30; margin-top: 8px; max-width: 220px; }
