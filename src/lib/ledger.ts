@@ -13,7 +13,6 @@ const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 const BASE_TABS = ["Positions", "Daily Prices", "Portfolio History", "Valuations", "Briefings", "Jim Notes", "Holdings", "Cash"] as const;
 // Newer tabs; an older ledger without them fails the whole batch, so they're read only when present.
 const TABS = [...BASE_TABS, "Dashboard Feed", "Requests"] as const;
-const REFRESH_MS = 15 * 60 * 1000;
 
 export type LedgerSettings = { id: string; enabled: boolean };
 export type Valuation = { at: string; intrinsic: number; marginOfSafety: number | null; moat: string; moatScore: number; verdict: string };
@@ -101,7 +100,7 @@ function latestBy(rows: Row[], keep: (r: Row) => boolean = () => true) {
 export function shouldReadLedger(full: boolean) {
   const settings = getStored("ledger.settings", settingsFallback);
   if (!settings.enabled || !settings.id) return false;
-  return force || full || Date.now() - getStored("~ledger.status", statusFallback).at > REFRESH_MS;
+  return force || full; // no timed reads: opening the app, a manual sync, or a Refresh press
 }
 
 // fetchJson is sync.ts's authorised fetch, so the ledger rides on the Drive sign-in.

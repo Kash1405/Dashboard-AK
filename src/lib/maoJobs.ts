@@ -1,10 +1,10 @@
 import { getStored, useStored } from "./store";
 
 // Starting MAO jobs from a static page. Requests sit in the ledger's Requests tab; something has
-// to run them:
+// to run them (nothing runs on a timer):
 //   1. GitHub Actions, if a GitHub token is saved in this browser (runs in about a minute), or
-//   2. the MAO server on this Mac, if it happens to be running, or
-//   3. the next scheduled GitHub Actions run (06:00 and 08:50 HKT) drains the queue.
+//   2. the MAO server on this Mac, if it happens to be running.
+// With neither, the request waits in the ledger until one of them runs.
 
 export type GithubSettings = { token: string; repo: string };
 const githubFallback: GithubSettings = { token: "", repo: "Kash1405/Automated-Equity-Valuation-MAO" };
@@ -49,4 +49,4 @@ export async function startRequests(): Promise<Runner> {
 export const runnerMessage = (runner: Runner, what: string) =>
   runner === "github" ? `${what} GitHub Actions is running it now; results appear in a minute or two.`
   : runner === "local" ? `${what} The MAO server on this Mac is running it now.`
-  : `${what} It's queued for the next scheduled run (06:00 or 08:50). Add a GitHub token in settings to run it right away.`;
+  : `${what} It's queued, but nothing can run it yet: add a GitHub token in Investments settings (key icon), or start the MAO server on this Mac.`;

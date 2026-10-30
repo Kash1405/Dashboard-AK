@@ -11,9 +11,10 @@ import { googleJson, refreshLedger, useSyncMeta } from "../lib/sync";
 import { dateKey, downloadFile, parseDateKey, pct, timeLabel } from "../lib/utils";
 
 // The Investments tab shows the MAO equity research system. Everything comes from the MAO Ledger
-// sheet: the 6 AM scheduled run (GitHub Actions) refreshes prices, NAV history and the "Dashboard
-// Feed" (research per holding), and the 08:50 run writes the morning briefing. The page writes only
-// the ledger's Holdings and Cash tabs and its Requests queue (see lib/maoJobs.ts).
+// sheet. Nothing runs on a timer: Refresh queues a run that updates prices, NAV history, the
+// "Dashboard Feed" (research per holding) and desk notes; Generate briefing writes the briefing; and
+// searching a stock queues its research. The page writes only the ledger's Holdings and Cash tabs and
+// its Requests queue (see lib/maoJobs.ts).
 
 type Money = ReturnType<typeof useMoney>;
 type View = "Summary" | "Holdings" | "Research";
@@ -56,7 +57,7 @@ export default function Investments() {
     if (!pending.length) setJob((j) => (j && !j.error ? null : j));
   }, [pending.length]);
 
-  // Queue work in the ledger, then start whatever can run it (GitHub Actions, the local server, or the next schedule).
+  // Queue work in the ledger, then start whatever can run it (GitHub Actions or the local server).
   const request = async (type: "refresh" | "research" | "briefing", ticker: string, what: string) => {
     setJob({ message: "Adding the request to the ledger…" });
     try {
@@ -75,13 +76,13 @@ export default function Investments() {
         <div>
           <p className="eyebrow red">MAO · LONG-TERM VALUE RESEARCH</p>
           <h1>Investment Control.</h1>
-          <p>Portfolio, holdings and research from the automated equity desk, updated every morning at 06:00.</p>
+          <p>Portfolio, holdings and research from the automated equity desk, updated when you press Refresh.</p>
         </div>
         <div className="welcome-actions">
-          <button className="secondary-button" onClick={() => refreshLedger()} disabled={status.loading}>
-            <Icon name="refresh" size={14}/> {status.loading ? "Reading ledger…" : "Refresh"}
+          <button className="secondary-button" onClick={() => request("refresh", "", "Refresh started: prices, research and desk notes.")} disabled={!drive.enabled}
+            title="Update prices, NAV history, research and desk notes, then reload the ledger">
+            <Icon name="refresh" size={14}/> {pending.some((r) => r.type === "refresh") ? "Refreshing…" : "Refresh"}
           </button>
-          <button className="secondary-button" onClick={() => request("refresh", "", "Update requested.")} disabled={!drive.enabled}><Icon name="bolt" size={14}/> Update now</button>
           <button className="primary-button" onClick={() => request("briefing", "", "Briefing requested.")} disabled={!drive.enabled}><Icon name="play" size={14}/> Generate briefing</button>
           <button className="icon-button" onClick={() => setShowSettings(!showSettings)} aria-label="Investment settings" title="Investment settings"><Icon name="key" size={15}/></button>
         </div>
@@ -96,7 +97,7 @@ export default function Investments() {
           : !drive.enabled ? <>Connect Google to load the MAO Ledger. <button className="text-button" onClick={() => refreshLedger()}>Connect Google</button></>
           : pending.length ? `${pending.length} request${pending.length > 1 ? "s" : ""} waiting to run (${pending.map((r) => r.ticker || r.type).join(", ")}). Checking every 30 seconds.`
           : updated ? `Research updated ${updated.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} ${timeLabel(updated)}${status.at ? ` · ledger read ${timeLabel(new Date(status.at))}` : ""}`
-          : "The ledger has no research feed yet. It appears after the next 06:00 run, or press Update now."}
+          : "The ledger has no research feed yet. Press Refresh to build it."}
       </p>
 
       <nav className="inv-tabs" aria-label="Investment views">
@@ -140,7 +141,7 @@ function LedgerSettings({ onClose }: { onClose: () => void }) {
         <p className="eyebrow red">MAO LEDGER · GOOGLE SHEETS</p>
         <h2>Where the data comes from</h2>
         <p>
-          The MAO Ledger in your Automated Equity Valuation folder is read whenever Google syncs (at most every 15 minutes, or when you press Refresh).
+          The MAO Ledger in your Automated Equity Valuation folder is read when you open the dashboard, after you press Refresh, and while a request is running.
           Change holdings and cash in the ledger's Holdings and Cash tabs; the next update picks them up.
         </p>
       </div>
@@ -158,8 +159,8 @@ function LedgerSettings({ onClose }: { onClose: () => void }) {
         <p className="eyebrow red">GITHUB ACTIONS · OPTIONAL</p>
         <h2>Run requests right away</h2>
         <p>
-          Holdings edits, stock searches and briefings are queued in the ledger and run by GitHub Actions at 06:00 and 08:50.
-          To run them within a minute or two instead, paste a fine-grained GitHub token limited to the <b>{github.repo}</b> repository
+          Refresh, briefings, holdings edits and stock searches are queued in the ledger and run by GitHub Actions; nothing runs on a timer.
+          For them to run, paste a fine-grained GitHub token limited to the <b>{github.repo}</b> repository
           with only <b>Actions: read and write</b> permission. It's stored in this browser only; add it on each device you use.
         </p>
       </div>
@@ -331,7 +332,7 @@ function BriefingPanel({ briefing, onGenerate, busy }: { briefing: Briefing | nu
           {open && <div className="briefing-body"><Markdown text={body}/></div>}
           <button className="text-button" onClick={() => setOpen(!open)}>{open ? "Hide full briefing" : "Read full briefing"}</button>
         </>
-      ) : <p className="chart-note">The briefing is written at 08:50 every morning, or press Generate.</p>}
+      ) : <p className="chart-note">No briefing yet. Press Generate to write one.</p>}
     </Panel>
   );
 }
@@ -559,6 +560,13 @@ function ResearchView({ summary, research, notes, requests, money, onResearch }:
     setSelected(symbol);
     if (!held.includes(symbol)) setRecent([symbol, ...recent.filter((x) => x !== symbol)].slice(0, 12));
   };
+  // A search runs the full analysis right away (or re-runs it), unless it's already queued.
+  const search = (t: string) => {
+    const symbol = t.trim().toUpperCase();
+    if (!symbol) return;
+    open(symbol);
+    if (!openRequests(requests).some((q) => q.type === "research" && q.ticker === symbol)) onResearch(symbol);
+  };
   const forget = (t: string) => {
     setRecent(recent.filter((x) => x !== t));
     if (selected === t) setSelected("");
@@ -579,7 +587,7 @@ function ResearchView({ summary, research, notes, requests, money, onResearch }:
 
   return (
     <>
-      <StockSearch onPick={open}/>
+      <StockSearch onPick={search}/>
       <div className="ticker-chips" role="tablist" aria-label="Stocks">
         <span className="chip-label">Holdings</span>
         {held.map((tk) => chip(tk))}
@@ -754,7 +762,7 @@ function ResearchDetail({ ticker, r, note, money }: { ticker: string; r: FeedRes
       <div className="inv-grid two">
         <Panel className="desk-note">
           <PanelTitle eyebrow={note ? `DESK NOTE · ${note.d}` : "DESK NOTE"} title={note?.action ? `${note.action}${note.score ? ` · ${Number(note.score).toFixed(0)}` : ""}` : "Analyst view"}/>
-          {note?.note ? <Markdown text={note.note}/> : <p className="chart-note">Desk notes are written after each 06:00 update.</p>}
+          {note?.note ? <Markdown text={note.note}/> : <p className="chart-note">Desk notes are written each time you press Refresh.</p>}
         </Panel>
         <Panel>
           <PanelTitle eyebrow="NEWS" title="Recent headlines"/>
