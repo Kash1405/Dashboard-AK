@@ -5,7 +5,7 @@ import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
 import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
-import { isClosedToday, quotes, refreshScheduleTasks, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
+import { isClosedToday, quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
 import { RECHECK_MS, refreshNews, useNewsFeed, useNewsStatus } from "../lib/news";
 import { useStored } from "../lib/store";
 import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
@@ -152,8 +152,8 @@ function NextUp({ now }: { now: Date }) {
 
 function RunPlan() {
   const [allTasks, setTasks] = useDailyTasks();
-  const [schedule] = useSchedule();
-  const tasks = allTasks.filter((task) => !isClosedToday(task));
+  // Daily Schedule items live in the Focus tab; the Run Plan shows only tasks added by hand.
+  const tasks = allTasks.filter((task) => !task.scheduleId && !isClosedToday(task));
   const [goals, setGoals] = useGoals();
   const [plan, setPlan] = useGoalTable();
   const today = dateKey();
@@ -192,14 +192,13 @@ function RunPlan() {
 
   return (
     <Panel className="plan-panel">
-      <PanelTitle eyebrow="01 / RUN PLAN" title="Tasks" action={<span className="progress-label">{doneCount} of {tasks.length} daily tasks done</span>}/>
+      <PanelTitle eyebrow="01 / RUN PLAN" title="Tasks" action={<span className="progress-label">{doneCount} of {tasks.length} tasks done</span>}/>
       <div className="plan-grid">
         <section className="plan-section">
           <div className="subhead">
             <h3>Daily Tasks</h3>
             <div className="subhead-actions">
-              {doneCount > 0 ? <button className="text-button done-toggle" onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>{showDone ? "Hide completed" : `Show ${doneCount} completed`}</button> : <span>Schedule items reset every morning</span>}
-              <button className="text-button" onClick={() => setTasks(refreshScheduleTasks(allTasks, schedule))} title="Reload tasks from the Daily Schedule (tasks you added stay)">Refresh</button>
+              {doneCount > 0 && <button className="text-button done-toggle" onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>{showDone ? "Hide completed" : `Show ${doneCount} completed`}</button>}
             </div>
           </div>
           <div className="task-progress"><span style={{ width: `${tasks.length ? (doneCount / tasks.length) * 100 : 0}%` }}/></div>
@@ -220,7 +219,7 @@ function RunPlan() {
                 <button className="row-delete" onClick={() => closeTask(task.id)} aria-label={`Close ${task.text}`} title={task.scheduleId ? "Close for today (back tomorrow)" : "Close task"}><Icon name="x" size={13}/></button>
               </div>
             ))}
-            {tasks.length === 0 && <p className="empty">No daily tasks yet. Fill in your Daily Schedule or add a task below.</p>}
+            {tasks.length === 0 && <p className="empty">No tasks yet. Add one below.</p>}
             {tasks.length > 0 && sortedTasks.length === 0 && <p className="empty">All done for today.</p>}
           </div>
           <form className="quick-add with-extra" onKeyDown={submitOnEnter} onSubmit={(event) => { event.preventDefault(); addTask(); }}>
