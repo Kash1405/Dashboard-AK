@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Icon, Panel, PanelTitle } from "./ui";
 import { dateKey, pad, parseDateKey, useNow } from "../lib/utils";
+import { useStored } from "../lib/store";
 import type { GoalRow } from "../lib/vault";
 
 type Draft = { id: string; skill: string; end: string };
@@ -18,12 +19,15 @@ export default function GoalCountdowns({ rows, setRows }: { rows: GoalRow[]; set
   const now = useNow(1000);
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [showDone, setShowDone] = useStored<boolean>("goals.countdowns.showDone", false);
   const editing = drafts !== null;
 
   const dated = rows
     .filter((row) => row.end)
     .sort((a, b) => Number(a.status === "Done") - Number(b.status === "Done") || a.end!.localeCompare(b.end!));
   const undated = rows.filter((row) => !row.end);
+  const doneCount = dated.filter((row) => row.status === "Done").length;
+  const listed = showDone ? dated : dated.filter((row) => row.status !== "Done");
 
   const startEditing = () => setDrafts(dated.map((row) => ({ id: row.id, skill: row.skill, end: row.end! })));
   const updateDraft = (id: string, patch: Partial<Draft>) => setDrafts((list) => list!.map((d) => (d.id === id ? { ...d, ...patch } : d)));
@@ -48,7 +52,14 @@ export default function GoalCountdowns({ rows, setRows }: { rows: GoalRow[]; set
       <button className="primary-button" onClick={save}><Icon name="check" size={15}/>Save all</button>
     </div>
   ) : (
-    <button className="secondary-button" onClick={startEditing}><Icon name="edit" size={15}/>Edit countdowns</button>
+    <div className="panel-actions">
+      {doneCount > 0 && (
+        <button className="text-button" onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>
+          {showDone ? `Hide done (${doneCount})` : `Show done (${doneCount})`}
+        </button>
+      )}
+      <button className="secondary-button" onClick={startEditing}><Icon name="edit" size={15}/>Edit countdowns</button>
+    </div>
   );
 
   if (!editing && dated.length === 0) {
@@ -86,10 +97,12 @@ export default function GoalCountdowns({ rows, setRows }: { rows: GoalRow[]; set
     );
   }
 
-  const shown = showAll ? dated : dated.slice(0, COLLAPSED);
+  const shown = showAll ? listed : listed.slice(0, COLLAPSED);
+  const active = dated.length - doneCount;
   return (
     <Panel className="countdown-panel">
-      <PanelTitle eyebrow="RACE CLOCK" title={`${dated.length} deadline${dated.length === 1 ? "" : "s"}`} action={action}/>
+      <PanelTitle eyebrow="RACE CLOCK" title={`${active} deadline${active === 1 ? "" : "s"}`} action={action}/>
+      {listed.length === 0 && <p className="table-hint">Every deadline is done. Use “Show done” to see them.</p>}
       <div className="countdown-grid">
         {shown.map((row) => {
           const deadline = deadlineOf(row.end!);
@@ -120,8 +133,8 @@ export default function GoalCountdowns({ rows, setRows }: { rows: GoalRow[]; set
           );
         })}
       </div>
-      {dated.length > COLLAPSED && (
-        <button className="text-button countdown-more" onClick={() => setShowAll(!showAll)}>{showAll ? "Show fewer" : `Show all ${dated.length}`}</button>
+      {listed.length > COLLAPSED && (
+        <button className="text-button countdown-more" onClick={() => setShowAll(!showAll)}>{showAll ? "Show fewer" : `Show all ${listed.length}`}</button>
       )}
     </Panel>
   );
