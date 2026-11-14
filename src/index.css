@@ -1248,3 +1248,36 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
   .stock-search input { font-size: 14px; }
   .cash-edit > div { grid-template-columns: 1fr 80px 100px 34px; }
 }
+
+/* ---------- Goal countdowns ---------- */
+.countdown-panel { margin-bottom: 18px; }
+.countdown-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.countdown-card { background: var(--soft); border: 1px solid var(--line); border-left: 3px solid #5c5e64; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.countdown-card.urgent, .countdown-card.late { border-left-color: var(--red); }
+.countdown-card.soon { border-left-color: var(--amber); }
+.countdown-card.calm { border-left-color: var(--green); }
+.countdown-card.done { opacity: .55; }
+.countdown-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.countdown-head small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.countdown-name { font-size: 15px; color: #e6e7e9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.countdown-clock { display: flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
+.countdown-clock b { font: 600 26px/1 'Play'; color: white; }
+.countdown-clock span { color: var(--dim); font-size: 12px; margin-right: 6px; }
+.countdown-clock em { font: 600 26px/1 'Play'; font-style: normal; color: var(--red); }
+.countdown-card.urgent .countdown-clock b, .countdown-card.late .countdown-clock b { color: var(--red); }
+.countdown-card.soon .countdown-clock b { color: var(--amber); }
+.countdown-card.done .countdown-clock b { color: var(--green); }
+.countdown-bar { display: block; height: 3px; background: #292b30; }
+.countdown-bar b { display: block; height: 100%; background: #6c6e74; }
+.countdown-card.urgent .countdown-bar b, .countdown-card.late .countdown-bar b { background: var(--red); }
+.countdown-card.soon .countdown-bar b { background: var(--amber); }
+.countdown-card.calm .countdown-bar b { background: var(--green); }
+.countdown-card.editing label { display: flex; flex-direction: column; gap: 5px; color: var(--dim); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; font-weight: 600; }
+.countdown-card.editing input { height: 34px; border: 1px solid #2c2e33; background: var(--field); color: #d6d7d9; padding: 0 10px; font-size: 14px; color-scheme: dark; letter-spacing: normal; text-transform: none; font-weight: 400; }
+.countdown-card.editing .text-button { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; }
+.countdown-add { margin-top: 12px; height: 36px; border: 1px dashed #3a3c42; background: var(--field); color: #bfc1c5; padding: 0 10px; font-size: 13.5px; width: min(360px, 100%); }
+.countdown-more { margin-top: 12px; }
+@media (max-width: 720px) {
+  .countdown-panel .panel-heading { flex-wrap: wrap; }
+  .countdown-grid { grid-template-columns: 1fr; }
+}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import EditableTable from "../components/EditableTable";
+import GoalCountdowns from "../components/GoalCountdowns";
 import { Panel, PanelTitle } from "../components/ui";
 import { dateKey, parseDateKey, uid } from "../lib/utils";
 import { useGoalTable, type GoalRow, type GoalStatus } from "../lib/vault";
@@ -48,6 +49,8 @@ export default function Goals() {
       <div className="welcome">
         <div><p className="eyebrow red">CHAMPIONSHIP STANDINGS</p><h1>Goals & Skills.</h1><p>Everything you are building, in one season plan.</p></div>
       </div>
+
+      <GoalCountdowns rows={rows} setRows={setRows}/>
 
       <div className="goal-stats">
         <div><span>Season progress</span><strong>{progress.toFixed(0)}%</strong><i><b style={{ width: `${progress}%` }}/></i></div>
