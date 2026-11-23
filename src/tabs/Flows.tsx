@@ -656,6 +656,7 @@ function Editor({ flow, onSave, onRestore, fullscreen, setFullscreen }: {
   const onPointerUp = (e: ReactPointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     drag.current = null;
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current.releasePointerCapture(e.pointerId);
     setPanning(false);
     setGhost(null);
     if (!d) return;
@@ -698,11 +699,20 @@ function Editor({ flow, onSave, onRestore, fullscreen, setFullscreen }: {
 
   const onDoubleClick = (e: ReactMouseEvent<SVGSVGElement>) => {
     if (readOnly) return;
-    const target = e.target as Element;
+    // The canvas captures the pointer while pressed, so the event's own target is the canvas:
+    // look up what is actually under the cursor instead.
+    const target = document.elementFromPoint(e.clientX, e.clientY) ?? (e.target as Element);
     const nodeEl = target.closest("[data-node]");
     const edgeEl = target.closest("[data-edge]");
-    if (nodeEl) setEditing({ type: "node", id: nodeEl.getAttribute("data-node")! });
-    else if (edgeEl) setEditing({ type: "edge", id: edgeEl.getAttribute("data-edge")! });
+    if (nodeEl) {
+      const id = nodeEl.getAttribute("data-node")!;
+      setSel({ nodes: [id], edges: [] });
+      setEditing({ type: "node", id });
+    } else if (edgeEl) {
+      const id = edgeEl.getAttribute("data-edge")!;
+      setSel({ nodes: [], edges: [id] });
+      setEditing({ type: "edge", id });
+    }
     else {
       const p = toWorld(e.clientX, e.clientY);
       const node = addNode("text", { x: p.x - 10, y: p.y - 20, w: 200, h: 40 });
