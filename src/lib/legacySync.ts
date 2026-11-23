@@ -1,5 +1,4 @@
 import type { CalEvent, DailyTask, FocusDraft, FocusLog, Goal, Note, Settings } from "./data";
-import type { Holding, PortfolioSettings, PricePoint, Snapshot } from "./portfolio";
 import { peekStored, setStored } from "./store";
 import { dateKey, uid } from "./utils";
 import type { GoalRow, MealRow, MedRow, ScheduleRow, TrackerCategory, TrackerLog } from "./vault";
@@ -21,7 +20,6 @@ type StateFile = {
   goalsTable?: GoalRow[];
   notes?: Note[];
   events?: CalEvent[];
-  portfolio: { currency?: string; holdings?: Omit<Holding, "history" | "updatedAt">[] };
   advisor: { meds?: MedRow[]; schedule?: ScheduleRow[]; meals?: MealRow[]; tracker?: TrackerCategory[] };
   focusDraft?: { task: string; description: string };
 };
@@ -32,8 +30,6 @@ type LogFile = {
   focus: Omit<FocusLog, "id">[];
   wellness: Record<string, { r: number[]; text: string; savedAt: string }>;
   meds: Record<string, Record<string, string>>;
-  portfolio: Record<string, number>;
-  prices: Record<string, Record<string, number>>;
   tracker: Record<string, Record<string, 1 | [0 | 1, string]>>;
   meals: Record<string, string[]>;
 };
@@ -62,7 +58,6 @@ function applyRemote(state: StateFile, logs: Record<string, LogFile>) {
     set("advisor.meals", state.advisor?.meals);
     set("advisor.tracker", state.advisor?.tracker);
     if (state.focusDraft) setStored<FocusDraft>("focus.draft", (d) => ({ ...d, ...state.focusDraft }), { task: "", description: "", linkedTaskId: "" });
-    if (state.portfolio?.currency) setStored<PortfolioSettings>("portfolio.settings", (s) => ({ ...s, currency: state.portfolio.currency! }), { apiKey: "", currency: "USD", hideConnect: false });
 
     const logList = Object.values(logs);
     const mergeDated = <T,>(key: string, pick: (log: LogFile) => Record<string, T>, decode: (date: string, value: T) => unknown) => {
@@ -80,20 +75,6 @@ function applyRemote(state: StateFile, logs: Record<string, LogFile>) {
     mergeDated("wellness.medLog", (l) => l.meds, (_d, m) => m);
     mergeDated("advisor.trackerLog", (l) => l.tracker, (_d, items) => Object.fromEntries(Object.entries(items).map(([id, v]) => [id, v === 1 ? { done: true, note: "" } : { done: v[0] === 1, note: v[1] }])));
     mergeDated("advisor.mealLog", (l) => l.meals, (_d, ids) => Object.fromEntries(ids.map((id) => [id, true])));
-
-    const localSnaps = (peekStored<Snapshot[]>("portfolio.snapshots") ?? []).filter((s) => keepLocal(s.d));
-    const remoteSnaps = logList.flatMap((log) => Object.entries(log.portfolio).map(([d, v]) => ({ d, v })));
-    setStored("portfolio.snapshots", [...localSnaps, ...remoteSnaps].sort((a, b) => a.d.localeCompare(b.d)));
-
-    if (state.portfolio?.holdings) {
-      const localHoldings = peekStored<Holding[]>("portfolio.holdings") ?? [];
-      const history = (symbol: string): PricePoint[] => {
-        const local = localHoldings.find((h) => h.symbol === symbol)?.history.filter((p) => keepLocal(p.d)) ?? [];
-        const remote = logList.flatMap((log) => Object.entries(log.prices[symbol] ?? {}).map(([d, p]) => ({ d, p })));
-        return [...local, ...remote].sort((a, b) => a.d.localeCompare(b.d));
-      };
-      setStored("portfolio.holdings", state.portfolio.holdings.map((h) => ({ ...h, history: history(h.symbol) })));
-    }
   }
 }
 

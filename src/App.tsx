@@ -6,15 +6,14 @@ import { legacyDefaultTasks, refreshScheduleTasks, SCHEDULE_TASKS_VERSION, timer
 import { useCompleteSession } from "./lib/focus";
 import { hasToken, syncGoogle, useGcalSettings } from "./lib/gcal";
 import { useDriveSync, useSyncMeta } from "./lib/sync";
-import { refreshPortfolio, totals, useHoldings, usePortfolioSettings, useRefreshStatus, useSnapshots } from "./lib/portfolio";
 import { useStored } from "./lib/store";
 import { isOverdue, useGoalTable, useSchedule } from "./lib/vault";
 import { dateKey, formatDuration, pad, playChime, useNow } from "./lib/utils";
 import Advisor from "./tabs/Advisor";
 import Experience from "./tabs/Experience";
+import Flows from "./tabs/Flows";
 import Focus from "./tabs/Focus";
 import Goals from "./tabs/Goals";
-import Investments from "./tabs/Investments";
 import Overview from "./tabs/Overview";
 
 const tabs: { tab: Tab; icon: string }[] = [
@@ -22,7 +21,7 @@ const tabs: { tab: Tab; icon: string }[] = [
   { tab: "Focus", icon: "focus" },
   { tab: "Goals", icon: "flag" },
   { tab: "Experience", icon: "briefcase" },
-  { tab: "Investments", icon: "chart" },
+  { tab: "Flows", icon: "flow" },
   { tab: "Advisor", icon: "heart" },
 ];
 
@@ -72,10 +71,6 @@ function useBackgroundJobs() {
   const [schedule] = useSchedule();
   const [scheduleVersion, setScheduleVersion] = useScheduleTasksVersion();
   const [goalRows, setGoalRows] = useGoalTable();
-  const [holdings] = useHoldings();
-  const [, setSnapshots] = useSnapshots();
-  const [portfolio] = usePortfolioSettings();
-  const [status] = useRefreshStatus();
   const [gcal] = useGcalSettings();
 
   // Focus timer finished: log it, chime, and show a message.
@@ -125,22 +120,7 @@ function useBackgroundJobs() {
     }
   }, [goalRows, today, setGoalRows]);
 
-  // Record one portfolio value per day for the performance chart.
-  useEffect(() => {
-    if (!holdings.length) return;
-    const value = Math.round(totals(holdings).value * 100) / 100;
-    setSnapshots((snapshots) => {
-      const existing = snapshots.find((s) => s.d === today);
-      if (existing?.v === value) return snapshots;
-      return [...snapshots.filter((s) => s.d !== today), { d: today, v: value }].sort((a, b) => a.d.localeCompare(b.d)).slice(-1500);
-    });
-  }, [holdings, today, setSnapshots]);
-
-  // Live prices every 10 minutes when a key is set.
   const minute = Math.floor(now.getTime() / 60000);
-  useEffect(() => {
-    if (portfolio.apiKey && !status.loading && Date.now() - status.at > 10 * 60 * 1000) refreshPortfolio();
-  }, [portfolio.apiKey, minute, status.loading, status.at]);
 
   // Keep Google Calendar fresh while the sign-in token is valid (about an hour per sign-in).
   useEffect(() => {
@@ -181,11 +161,11 @@ export default function App() {
   return (
     <div className="app-shell">
       <Header active={active} setActive={setActive} onLock={lock}/>
-      {active === "Overview" && <Overview onNavigate={setActive}/>}
+      {active === "Overview" && <Overview/>}
       {active === "Focus" && <Focus/>}
       {active === "Goals" && <Goals/>}
       {active === "Experience" && <Experience/>}
-      {active === "Investments" && <Investments/>}
+      {active === "Flows" && <Flows/>}
       {active === "Advisor" && <Advisor/>}
       <footer><span>KASH COMMAND · PRIVATE DASHBOARD</span><span>{driveOn ? "Source of truth: Google Drive › Personal Dashboard" : "Saved in this browser · connect Google Drive to sync"} <i/></span></footer>
     </div>

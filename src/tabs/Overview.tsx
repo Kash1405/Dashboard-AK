@@ -1,18 +1,17 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Donut, Icon, Panel, PanelTitle, Sparkline } from "../components/ui";
+import { Icon, Panel, PanelTitle } from "../components/ui";
 import { useHeroCars } from "../lib/cars";
 import { googleClientId, hasEnvClientId, useGoogleClientId } from "../lib/google";
 import { authorize, createGoogleEvent, deleteGoogleEvent, disconnectGoogle, hasToken, preloadGoogle, syncGoogle, useGcalEvents, useGcalSettings, useGcalStatus } from "../lib/gcal";
 import { currentBlock } from "../lib/schedule";
 import { inFocus, isOverdue, useGoalTable, useSchedule, type GoalRow } from "../lib/vault";
-import { isClosedToday, quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink, type Tab } from "../lib/data";
+import { isClosedToday, quotes, useDailyTasks, useEvents, useGoals, useLinks, useNotes, useSettings, type QuickLink } from "../lib/data";
 import { RECHECK_MS, refreshNews, useNewsFeed, useNewsStatus } from "../lib/news";
 import { useStored } from "../lib/store";
-import { allocation, derive, totals, useHoldings, useMoney, useSnapshots, type Holding } from "../lib/portfolio";
-import { addDays, atTime, dateKey, pad, parseDateKey, pct, relativeDay, submitOnEnter, timeLabel, uid, useNow } from "../lib/utils";
+import { addDays, atTime, dateKey, pad, parseDateKey, relativeDay, submitOnEnter, timeLabel, uid, useNow } from "../lib/utils";
 
 
-export default function Overview({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+export default function Overview() {
   const now = useNow(1000);
   return (
     <main className="page">
@@ -30,7 +29,6 @@ export default function Overview({ onNavigate }: { onNavigate: (tab: Tab) => voi
         </aside>
       </div>
       <NewsPanel/>
-      <PortfolioSummary onNavigate={onNavigate}/>
     </main>
   );
 }
@@ -689,70 +687,5 @@ function QuotePanel() {
         <button className="text-button" onClick={next}>Next quote <Icon name="arrow" size={13}/></button>
       </div>
     </Panel>
-  );
-}
-
-function PortfolioSummary({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
-  const [holdings] = useHoldings();
-  const [snapshots] = useSnapshots();
-  const money = useMoney();
-  const t = totals(holdings);
-  const rows = holdings.map((holding) => ({ holding, d: derive(holding) })).sort((a, b) => b.d.plPct - a.d.plPct);
-  const winners = rows.filter((row) => row.d.plPct >= 0).slice(0, 3);
-  const losers = [...rows].reverse().filter((row) => row.d.plPct < 0).slice(0, 3);
-  const chart = snapshots.slice(-90).map((s) => s.v);
-  const segments = allocation(holdings);
-
-  return (
-    <Panel className="portfolio-panel">
-      <PanelTitle eyebrow="02 / MY PORTFOLIO" title="Market Position" action={<button className="primary-button" onClick={() => onNavigate("Investments")}>Manage stocks <Icon name="arrow" size={15}/></button>}/>
-      {holdings.length === 0 ? (
-        <p className="empty">No stocks yet. <button className="text-button strong" onClick={() => onNavigate("Investments")}>Add your first position →</button></p>
-      ) : (
-        <div className="portfolio-grid">
-          <div className="portfolio-value">
-            <small>TOTAL VALUE</small>
-            <strong>{money(t.value)}</strong>
-            <span className={t.dayChange >= 0 ? "gain" : "gain loss"}>{money(t.dayChange, { signed: true })} <i>{pct(t.dayPct)}</i> today</span>
-            <div className="stat-pair">
-              <span>Total P/L <b className={t.pl >= 0 ? "up" : "down"}>{money(t.pl, { signed: true })} ({pct(t.plPct, 1)})</b></span>
-              <span>Invested <b>{money(t.cost, { digits: 0 })}</b></span>
-            </div>
-            <div className="big-chart">
-              {chart.length > 1 ? <Sparkline values={chart} tall/> : <p className="chart-note">Your value chart builds up as the dashboard records one point per day.</p>}
-            </div>
-          </div>
-          <div className="allocation">
-            <small>ALLOCATION</small>
-            <Donut segments={segments}><strong>{holdings.length}</strong><span>HOLDINGS</span></Donut>
-            <div className="legend">
-              {segments.map((s) => <span key={s.label}><i style={{ background: s.color }}/>{s.label}<b>{s.share.toFixed(0)}%</b></span>)}
-            </div>
-          </div>
-          <div className="movers">
-            <MoverList title="TOP WINNERS" rows={winners} money={money}/>
-            <MoverList title="TOP LOSERS" rows={losers} money={money}/>
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function MoverList({ title, rows, money }: { title: string; rows: { holding: Holding; d: ReturnType<typeof derive> }[]; money: ReturnType<typeof useMoney> }) {
-  return (
-    <div className="mover-group">
-      <div className="movers-head"><small>{title}</small><span>PRICE · TOTAL RETURN</span></div>
-      {rows.map(({ holding, d }) => (
-        <div className="mover" key={holding.id}>
-          <b>{holding.symbol}</b>
-          <span>{holding.name}</span>
-          <Sparkline values={holding.history.map((point) => point.p)} positive={d.plPct >= 0}/>
-          <strong>{money(holding.price)}</strong>
-          <em className={d.plPct >= 0 ? "up" : "down"}>{pct(d.plPct, 1)}</em>
-        </div>
-      ))}
-      {rows.length === 0 && <p className="empty small">None right now.</p>}
-    </div>
   );
 }

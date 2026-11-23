@@ -1,12 +1,11 @@
 import { useEffect } from "react";
 import { googleClientId, isFresh, preloadGoogle, requestToken, revokeToken, type Token } from "./google";
 import { importLegacy } from "./legacySync";
-import { readLedger, requestLedgerRefresh, shouldReadLedger } from "./ledger";
 import { peekStored, setStored, subscribeAll, useStored } from "./store";
 import { TABLES, applyNotes, cellText, noteRows, notesHtml, parseNotes, type Cell, type FileRole, type Table } from "./tables";
 
 // Google Drive is the source of truth. Everything lives in a visible "Personal Dashboard" folder:
-//   Dashboard Data  (Google Sheet) – one tab per input list (tasks, goals, holdings, meds…)
+//   Dashboard Data  (Google Sheet) – one tab per input list (tasks, goals, flows, meds…)
 //   Dashboard Logs  (Google Sheet) – one tab per dated history (focus, wellness, habits…)
 //   Notes           (Google Doc)   – the notes list
 //   About this folder (Google Doc) – how it works
@@ -18,8 +17,7 @@ import { TABLES, applyNotes, cellText, noteRows, notesHtml, parseNotes, type Cel
 // allow only during a click. So the token is kept for its full hour (across reloads), and when
 // it is missing or about to run out, the next click anywhere on the page quietly renews it.
 
-// spreadsheets.readonly lets the dashboard read the MAO Ledger, a sheet it did not create (see ledger.ts).
-// spreadsheets (not .readonly): the Investments tab edits holdings and queues requests in the MAO Ledger.
+// spreadsheets: kept from the (paused) Investments tab so existing sign-ins stay valid and it can return without a new consent.
 const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/spreadsheets";
 const FILES_API = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
@@ -117,11 +115,6 @@ async function api(url: string, init: RequestInit = {}, gen = generation) {
   return response;
 }
 const json = async <T,>(url: string, init: RequestInit = {}) => (await api(url, init)).json() as Promise<T>;
-// Authorised Google request for other modules (the MAO Ledger writes). Needs Drive sync connected.
-export async function googleJson<T>(url: string, init: RequestInit = {}) {
-  if (!token) throw new Error("Connect Google first (Drive sync is off or signed out).");
-  return json<T>(url, init);
-}
 const post = (body: unknown) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 type DriveFile = { id: string; name: string; mimeType: string; version: string; trashed?: boolean; appProperties?: { kash?: string } };
@@ -207,8 +200,8 @@ const readme = () => `<html><body><h1>Personal Dashboard</h1>
 <p>This folder is the source of truth for your KASH dashboard. The dashboard reads from it and writes back to it.</p>
 <h2>What is here</h2>
 <ul>
-<li><b>Dashboard Data</b> (Sheet): your inputs. One tab each for settings, links, daily tasks, goals, goal plan, calendar events, holdings, medications, daily schedule, meal plan and habit tracker.</li>
-<li><b>Dashboard Logs</b> (Sheet): your history. Focus sessions, wellness check-ins, medication, habit and meal logs, portfolio value and price history.</li>
+<li><b>Dashboard Data</b> (Sheet): your inputs. One tab each for settings, links, daily tasks, goals, goal plan, calendar events, flows, medications, daily schedule, meal plan and habit tracker.</li>
+<li><b>Dashboard Logs</b> (Sheet): your history. Focus sessions, wellness check-ins, medication, habit and meal logs.</li>
 <li><b>Notes</b> (Doc): your notes. Each starts with a line like “— 2026-10-18 09:30 —”.</li>
 </ul>
 <h2>How syncing works</h2>
@@ -388,9 +381,6 @@ async function runSync(full: boolean) {
   }
   versions.notes = (await json<DriveFile>(`${FILES_API}/${notes.id}?fields=version`)).version;
 
-  // MAO Ledger: read on a full sync, when asked, or every 15 minutes. Its errors don't fail the sync.
-  if (gen === generation && shouldReadLedger(full)) await readLedger(json);
-
   if (gen !== generation) return;
   setMeta({ hashes, versions });
   setStatus({ state: timer === undefined ? "synced" : "pending", at: Date.now(), error: "" });
@@ -426,17 +416,6 @@ export function syncNow(interactive = false, full = true) {
 export function signIn() {
   setMeta({ enabled: true });
   return syncNow(true);
-}
-
-// From a click: reads the MAO Ledger now (Google may ask for permission to read it).
-export function refreshLedger(reconnect = false) {
-  requestLedgerRefresh();
-  if (reconnect) {
-    forceConsent = true;
-    setToken(null);
-  }
-  if (!meta().enabled) return signIn();
-  return syncNow(true, false);
 }
 
 export function signOut() {

@@ -1,5 +1,5 @@
 import type { CalEvent, DailyTask, FocusLog, Goal, Note, QuickLink, Settings } from "./data";
-import type { Holding, PortfolioSettings, PricePoint, Snapshot } from "./portfolio";
+import { FLOWS_KEY, normalizeDoc, serializeDoc, type Flow } from "./flows";
 import { EXP_KEY, EXP_SECTIONS, defaultExperience, type ExpEntry } from "./experience";
 import { hasStored, peekStored, setStored } from "./store";
 import { pad, uid } from "./utils";
@@ -67,19 +67,16 @@ const settingsTable: Table = {
   file: "data",
   sheet: "Settings",
   headers: ["Setting", "Value"],
-  keys: ["settings", "portfolio.settings", "daily.lastReset"],
+  keys: ["settings", "daily.lastReset"],
   rows: () => [
     ["Name", get<Settings>("settings", { name: "" }).name],
-    ["Currency", get<Partial<PortfolioSettings>>("portfolio.settings", {}).currency ?? "USD"],
     ["Daily tasks last reset", get("daily.lastReset", "")],
   ],
   apply: (rows) => {
     const value = (label: string) => rows.find((r) => r[0].trim().toLowerCase() === label.toLowerCase())?.[1];
     const name = value("Name");
-    const currency = value("Currency");
     const reset = value("Daily tasks last reset");
     if (name !== undefined) setStored<Settings>("settings", (s) => ({ ...s, name }), { name: "" });
-    if (currency) setStored<PortfolioSettings>("portfolio.settings", (s) => ({ ...s, currency: currency.trim().toUpperCase() }), { apiKey: "", currency: "USD", hideConnect: false });
     if (reset) setStored("daily.lastReset", date(reset));
   },
 };
@@ -158,37 +155,6 @@ const linksTable = listTable<QuickLink>("data", "Links", "links", [
   ["Name", (l) => l.name, (s) => ({ name: s.trim() })],
   ["URL", (l) => l.url, (s) => ({ url: s.trim() })],
 ]);
-
-const holdingsTable: Table = {
-  file: "data",
-  sheet: "Holdings",
-  headers: ["ID", "Symbol", "Name", "Shares", "Avg Cost", "Price", "Prev Close", "Intrinsic Value", "Updated At"],
-  keys: ["portfolio.holdings"],
-  rows: () => get<Holding[]>("portfolio.holdings", []).map((h) => [h.id, h.symbol, h.name, h.shares, h.avgCost, h.price, h.prevClose, h.intrinsic, h.updatedAt ?? ""]),
-  apply: (rows) => {
-    const local = get<Holding[]>("portfolio.holdings", []);
-    setStored<Holding[]>(
-      "portfolio.holdings",
-      rows
-        .filter((r) => r[1]?.trim())
-        .map((r) => {
-          const symbol = r[1].trim().toUpperCase();
-          return {
-            id: r[0].trim() || uid(),
-            symbol,
-            name: r[2] ?? "",
-            shares: n(r[3] ?? ""),
-            avgCost: n(r[4] ?? ""),
-            price: n(r[5] ?? ""),
-            prevClose: n(r[6] ?? ""),
-            intrinsic: n(r[7] ?? ""),
-            updatedAt: r[8] || undefined,
-            history: local.find((h) => h.symbol === symbol)?.history ?? [],
-          };
-        }),
-    );
-  },
-};
 
 const medsTable = listTable<MedRow>("data", "Medications", "advisor.meds", [
   ["Name", (m) => m.name, (s) => ({ name: s })],
@@ -303,32 +269,49 @@ const habitLogTable = datedTable("Habit Log", "advisor.trackerLog", ["Date", "It
   (r) => ({ done: yes(r[0] ?? ""), note: r[1] ?? "" }));
 const mealLogTable = datedTable("Meal Log", "advisor.mealLog", ["Date", "Meal ID", "Meal", "Eaten"], mealName, (v) => [Boolean(v)], (r) => yes(r[0] ?? "TRUE") || !r[0]);
 
-const snapshotsTable: Table = {
-  file: "logs",
-  sheet: "Portfolio Value",
-  headers: ["Date", "Value"],
-  keys: ["portfolio.snapshots"],
-  rows: () => byDateDesc(get<Snapshot[]>("portfolio.snapshots", []).map((s) => [s.d, s.v])),
-  apply: (rows) => setStored<Snapshot[]>("portfolio.snapshots", rows.filter((r) => r[0]?.trim()).map((r) => ({ d: date(r[0]), v: n(r[1] ?? "") })).sort((a, b) => a.d.localeCompare(b.d))),
-};
-
-const pricesTable: Table = {
-  file: "logs",
-  sheet: "Price History",
-  headers: ["Date", "Symbol", "Price"],
-  keys: ["portfolio.holdings"],
-  rows: () => byDateDesc(get<Holding[]>("portfolio.holdings", []).flatMap((h) => h.history.map((p) => [p.d, h.symbol, p.p]))),
+// Each flow is one row; its shapes and connectors are JSON spread over a few "Data" cells
+// (Sheets caps a cell at 50,000 characters). Edit flows in the dashboard, not in Sheets.
+const FLOW_CHUNK = 45000;
+const FLOW_CHUNKS = 8;
+const flowDataHeaders = Array.from({ length: FLOW_CHUNKS }, (_, i) => (i ? `Data ${i + 1}` : "Data"));
+export const FLOW_MAX_CHARS = FLOW_CHUNK * FLOW_CHUNKS;
+const flowsTable: Table = {
+  file: "data",
+  sheet: "Flows",
+  headers: ["ID", "Name", "Status", "Description", "Shapes", "Connectors", "Created At", "Updated At", ...flowDataHeaders],
+  keys: [FLOWS_KEY],
+  rows: () => get<Flow[]>(FLOWS_KEY, []).map((f) => {
+    const json = serializeDoc(f);
+    const chunks = Array.from({ length: FLOW_CHUNKS }, (_, i) => json.slice(i * FLOW_CHUNK, (i + 1) * FLOW_CHUNK));
+    return [f.id, f.name, f.status === "archived" ? "Archived" : "Active", f.description, f.nodes.length, f.edges.length, f.createdAt, f.updatedAt, ...chunks];
+  }),
   apply: (rows) => {
-    const bySymbol: Record<string, PricePoint[]> = {};
-    for (const r of rows) if (r[0]?.trim() && r[1]?.trim()) (bySymbol[r[1].trim().toUpperCase()] ??= []).push({ d: date(r[0]), p: n(r[2] ?? "") });
-    setStored<Holding[]>("portfolio.holdings", (list) => list.map((h) => ({ ...h, history: (bySymbol[h.symbol] ?? []).sort((a, b) => a.d.localeCompare(b.d)) })), []);
+    const local = get<Flow[]>(FLOWS_KEY, []);
+    setStored<Flow[]>(FLOWS_KEY, rows.filter((r) => r[0]?.trim() || r[1]?.trim()).map((r) => {
+      const id = r[0].trim() || uid();
+      const prev = local.find((f) => f.id === id);
+      let doc = prev ? { nodes: prev.nodes, edges: prev.edges } : { nodes: [], edges: [] };
+      try {
+        const json = r.slice(8, 8 + FLOW_CHUNKS).join("");
+        if (json.trim()) doc = normalizeDoc(JSON.parse(json));
+      } catch {
+        // Unreadable data (edited by hand): keep this device's copy of the drawing.
+      }
+      const now = new Date().toISOString();
+      return {
+        id, name: (r[1] ?? "").trim() || "Untitled flow", description: r[3] ?? "",
+        status: /^archiv/i.test((r[2] ?? "").trim()) ? "archived" : "active",
+        createdAt: r[6]?.trim() ? dateTime(r[6]) : prev?.createdAt ?? now,
+        updatedAt: r[7]?.trim() ? dateTime(r[7]) : prev?.updatedAt ?? now,
+        ...doc,
+      };
+    }));
   },
 };
 
-// Order matters when applying: Holdings before Price History.
 export const TABLES: Table[] = [
-  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, experienceTable, eventsTable, holdingsTable, medsTable, scheduleTable, mealsTable, trackerTable,
-  focusTable, wellnessTable, medLogTable, habitLogTable, mealLogTable, snapshotsTable, pricesTable,
+  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, experienceTable, eventsTable, flowsTable, medsTable, scheduleTable, mealsTable, trackerTable,
+  focusTable, wellnessTable, medLogTable, habitLogTable, mealLogTable,
 ];
 
 // ---------- Notes doc ----------
