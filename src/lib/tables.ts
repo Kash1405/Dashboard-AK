@@ -1,5 +1,6 @@
 import type { CalEvent, DailyTask, FocusLog, Goal, Note, QuickLink, Settings } from "./data";
 import { FLOWS_KEY, normalizeDoc, serializeDoc, type Flow } from "./flows";
+import { TIMELINE_HIDDEN, TIMELINE_ITEMS, TIMELINE_ORDER, orderRows, type TimelineItem } from "./timeline";
 import { EXP_KEY, EXP_SECTIONS, defaultExperience, type ExpEntry } from "./experience";
 import { hasStored, peekStored, setStored } from "./store";
 import { pad, uid } from "./utils";
@@ -309,8 +310,33 @@ const flowsTable: Table = {
   },
 };
 
+// Timeline rows in their on-screen order. "Goal" rows mirror the Goal Plan tab (edit those there);
+// "Item" rows exist only on the timeline. Reorder rows here to reorder the timeline.
+const timelineTable: Table = {
+  file: "data",
+  sheet: "Timeline",
+  headers: ["ID", "Kind", "Title", "Start Date", "End Date", "Status", "Notes", "Hidden"],
+  keys: [TIMELINE_ITEMS, TIMELINE_ORDER, TIMELINE_HIDDEN, "goals.table"],
+  rows: () => {
+    const hidden = new Set(get<string[]>(TIMELINE_HIDDEN, []));
+    return orderRows(get<string[]>(TIMELINE_ORDER, []), get<GoalRow[]>("goals.table", []), get<TimelineItem[]>(TIMELINE_ITEMS, []))
+      .map((r) => [r.id, r.kind === "goal" ? "Goal" : "Item", r.title, r.start, r.end, r.status, r.notes, hidden.has(r.id)]);
+  },
+  apply: (rows) => {
+    const list = rows.filter((r) => r[0]?.trim() || r[2]?.trim());
+    if (!list.length) return; // an empty or brand-new tab never wipes this device's timeline
+    const withIds = list.map((r) => [r[0].trim() || uid(), ...r.slice(1)]);
+    setStored<TimelineItem[]>(TIMELINE_ITEMS, withIds.filter((r) => !/^goal$/i.test((r[1] ?? "").trim())).map((r) => ({
+      id: r[0], title: r[2] ?? "", start: r[3]?.trim() ? date(r[3]) : "", end: r[4]?.trim() ? date(r[4]) : "",
+      status: statuses.find((x) => x.toLowerCase() === (r[5] ?? "").trim().toLowerCase()) ?? "Not Started", notes: r[6] ?? "",
+    })));
+    setStored<string[]>(TIMELINE_ORDER, withIds.map((r) => r[0]));
+    setStored<string[]>(TIMELINE_HIDDEN, withIds.filter((r) => yes(r[7] ?? "")).map((r) => r[0]));
+  },
+};
+
 export const TABLES: Table[] = [
-  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, experienceTable, eventsTable, flowsTable, medsTable, scheduleTable, mealsTable, trackerTable,
+  settingsTable, linksTable, tasksTable, goalsTable, goalPlanTable, timelineTable, experienceTable, eventsTable, flowsTable, medsTable, scheduleTable, mealsTable, trackerTable,
   focusTable, wellnessTable, medLogTable, habitLogTable, mealLogTable,
 ];
 

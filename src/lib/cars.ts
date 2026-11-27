@@ -24,8 +24,12 @@ export const cars: Car[] = [
   { src: "cars/le-mans-24h.jpg", car: "24 Hours of Le Mans", author: "350z33", license: "CC BY-SA 4.0", source: "https://commons.wikimedia.org/wiki/File:2023_24HoursofLeMans_start.jpg", position: "center 55%" },
 ].map((car) => ({ ...car, src: `${base}${car.src}` }));
 
-// Senna's McLaren always leads the hero rotation; the rest is a fresh daily pick from the curated list below.
+// Senna's McLaren always leads the hero rotation; the rest is a fresh daily pick of F1 cars from the curated list below.
 export const senna = cars[0];
+// The hero shows Formula 1 only (for now); these bundled ones are its offline fallback.
+const HERO_KINDS: Kind[] = ["f1"];
+const bundledF1 = ["mclaren-mp4-4", "red-bull-rb19-sparks", "red-bull-rb19-race", "mercedes-w196"];
+const heroFallback = cars.filter((car) => bundledF1.some((name) => car.src.endsWith(`${name}.jpg`)));
 
 const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
 
@@ -109,7 +113,9 @@ const CURATED: [Kind, string, string][] = [
 const DAILY_COUNT = 12;
 
 type DailyCars = { day: string; cars: Car[] };
-export const useDailyCarSet = () => useStored<DailyCars>("cars.curated", { day: "", cars: [] });
+// Separate key from the old mixed-car set, so switching to F1 only takes effect today.
+const DAILY_KEY = "cars.curated.f1";
+export const useDailyCarSet = () => useStored<DailyCars>(DAILY_KEY, { day: "", cars: [] });
 
 // Same seed on every device, so the whole day shows the same set everywhere.
 function seeded(seed: string) {
@@ -141,12 +147,11 @@ const stripHtml = (html = "") => new DOMParser().parseFromString(html, "text/htm
 
 type ImageInfo = { url: string; thumburl?: string; descriptionurl: string; extmetadata?: Record<string, { value: string } | undefined> };
 
-// Today's set: a seeded shuffle, dealt round-robin across kinds so every day mixes classics,
-// supercars, hypercars, F1, GT and prototypes.
+// Today's set: a seeded shuffle of the hero's kinds (F1 only for now), dealt round-robin across kinds.
 async function pickDailyCars(day: string): Promise<Car[]> {
   const random = seeded(day);
   const byKind = new Map<Kind, [Kind, string, string][]>();
-  for (const entry of shuffle(CURATED, random)) byKind.set(entry[0], [...(byKind.get(entry[0]) ?? []), entry]);
+  for (const entry of shuffle(CURATED.filter(([kind]) => HERO_KINDS.includes(kind)), random)) byKind.set(entry[0], [...(byKind.get(entry[0]) ?? []), entry]);
   const piles = shuffle([...byKind.values()], random);
   const chosen: [Kind, string, string][] = [];
   for (let round = 0; chosen.length < DAILY_COUNT && piles.some((pile) => pile.length > round); round++) {
@@ -184,20 +189,21 @@ export function useHeroCars(): Car[] {
     loading = today;
     pickDailyCars(today)
       .then((list) => {
-        if (list.length >= 4) setStored<DailyCars>("cars.curated", { day: today, cars: list });
+        if (list.length >= 4) setStored<DailyCars>(DAILY_KEY, { day: today, cars: list });
       })
       .catch(() => undefined)
       .finally(() => {
         loading = "";
       });
   }, [daily.day, today]);
-  const rest = daily.cars.length ? daily.cars : cars.slice(1);
+  const rest = daily.cars.length ? daily.cars : heroFallback.slice(1);
   return [senna, ...rest];
 }
 
-// Earlier versions kept a random Commons pick under this key; it is no longer used.
+// Earlier versions kept other picks under these keys; they are no longer used.
 try {
   window.localStorage.removeItem("apex2.cars.daily");
+  window.localStorage.removeItem("apex2.cars.curated");
 } catch {
   // Storage blocked: nothing to clean up.
 }

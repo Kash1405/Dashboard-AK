@@ -106,11 +106,16 @@ function NextUp({ now }: { now: Date }) {
   const [schedule] = useSchedule();
   const block = currentBlock(schedule, now).current;
   const next = upcoming[0];
-  const diff = next ? Math.max(0, next.at.getTime() - now.getTime()) : 0;
+  const nextDiff = next ? Math.max(0, next.at.getTime() - now.getTime()) : 0;
+  // The big countdown tracks what you should be doing now: time left in the current block,
+  // or, with nothing on, the time until the next item.
+  const blockEnd = block ? atTime(dateKey(now), block.end) : null;
+  const diff = blockEnd ? Math.max(0, blockEnd.getTime() - now.getTime()) : nextDiff;
   const days = Math.floor(diff / 86400000);
   const units: [number, string][] = days > 0
     ? [[days, "DAYS"], [Math.floor(diff / 3600000) % 24, "HRS"], [Math.floor(diff / 60000) % 60, "MIN"]]
     : [[Math.floor(diff / 3600000), "HRS"], [Math.floor(diff / 60000) % 60, "MIN"], [Math.floor(diff / 1000) % 60, "SEC"]];
+  const showCountdown = block ? true : !!next;
 
   return (
     <Panel className="hero-card">
@@ -119,25 +124,42 @@ function NextUp({ now }: { now: Date }) {
       ))}
       <div className="hero-shade"/>
       <div className="hero-copy">
-        {block && <span className="hero-now">ON TRACK NOW · <b>{block.activity}</b> until {block.end}</span>}
-        <span className="live-pill"><i/> NEXT RACE · {next ? next.kind.toUpperCase() : "TRACK CLEAR"}</span>
-        <h2>{next ? next.title : "Nothing on the grid"}</h2>
-        <p>
-          {next ? <>{relativeDay(next.at)} <span>·</span> {next.allDay ? "All day" : timeLabel(next.at)}</> : "Add a calendar event or a timed daily task to see it here."}
-        </p>
+        {block ? (
+          <>
+            <span className="live-pill now"><i/> ON TRACK NOW · UNTIL {block.end}</span>
+            <h2 className="hero-current">{block.activity}</h2>
+            {block.description && <p className="hero-detail">{block.description}</p>}
+            {next && (
+              <p className="hero-next">
+                <b>NEXT</b> {next.title} <span>·</span> {relativeDay(next.at)} {next.allDay ? "all day" : timeLabel(next.at)} <span>·</span> in {shortSpan(nextDiff)}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="live-pill"><i/> UP NEXT · {next ? next.kind.toUpperCase() : "TRACK CLEAR"}</span>
+            <h2 className="hero-current">{next ? next.title : "Nothing on the grid"}</h2>
+            <p className="hero-detail">
+              {next ? <>{relativeDay(next.at)} <span>·</span> {next.allDay ? "All day" : timeLabel(next.at)}</> : "Add a calendar event, a timed daily task or a Daily Schedule block to see it here."}
+            </p>
+          </>
+        )}
       </div>
-      {next && (
-        <div className="countdown" aria-label="Countdown">
-          {next.allDay && diff === 0 ? (
-            <div><strong>TODAY</strong><span>ALL DAY</span></div>
-          ) : (
-            units.map(([value, label], index) => (
-              <Fragment key={label}>
-                {index > 0 && <b>:</b>}
-                <div><strong>{pad(value)}</strong><span>{label}</span></div>
-              </Fragment>
-            ))
-          )}
+      {showCountdown && (
+        <div className="countdown" aria-label={block ? "Time left in this block" : "Countdown to next"}>
+          <em>{block ? "TIME LEFT" : "STARTS IN"}</em>
+          <div className="countdown-units">
+            {!block && next?.allDay && diff === 0 ? (
+              <div><strong>TODAY</strong><span>ALL DAY</span></div>
+            ) : (
+              units.map(([value, label], index) => (
+                <Fragment key={label}>
+                  {index > 0 && <b>:</b>}
+                  <div><strong>{pad(value)}</strong><span>{label}</span></div>
+                </Fragment>
+              ))
+            )}
+          </div>
         </div>
       )}
       <div className="hero-dots">
@@ -146,6 +168,15 @@ function NextUp({ now }: { now: Date }) {
       <a className="hero-credit" href={cars[image].source} target="_blank" rel="noreferrer">{cars[image].car} · Photo: {cars[image].author}, {cars[image].license}</a>
     </Panel>
   );
+}
+
+// "2d 4h", "1h 20m", "12m" for the small Next line.
+function shortSpan(ms: number) {
+  const mins = Math.max(1, Math.round(ms / 60000));
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${pad(m)}m` : `${m}m`;
 }
 
 function RunPlan() {
@@ -162,6 +193,10 @@ function RunPlan() {
   const [goalTag, setGoalTag] = useState("");
   const [editing, setEditing] = useState<{ id: string; text: string; time: string } | null>(null);
   const [showDone, setShowDone] = useStored("tasks.showDone", false);
+  const [showDoneGoals, setShowDoneGoals] = useStored("overview.showDoneGoals", false);
+  const goalsDone = focused.filter((row) => row.status === "Done").length + goals.filter((goal) => goal.done).length;
+  const shownFocused = focused.filter((row) => showDoneGoals || row.status !== "Done");
+  const shownGoals = goals.filter((goal) => showDoneGoals || !goal.done);
   const doneCount = tasks.filter((task) => task.done).length;
   // Checked-off tasks are hidden unless "Show completed" is on.
   const sortedTasks = tasks.filter((task) => showDone || !task.done).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
@@ -228,9 +263,15 @@ function RunPlan() {
         </section>
 
         <section className="plan-section">
-          <div className="subhead"><h3>Overall Focused Goals</h3><span>{focused.filter((row) => row.status === "Done").length + goals.filter((goal) => goal.done).length} of {focused.length + goals.length} achieved</span></div>
+          <div className="subhead">
+            <h3>Overall Focused Goals</h3>
+            <div className="subhead-actions">
+              <span>{goalsDone} of {focused.length + goals.length} achieved</span>
+              {goalsDone > 0 && <button className="text-button done-toggle" onClick={() => setShowDoneGoals(!showDoneGoals)} aria-pressed={showDoneGoals}>{showDoneGoals ? "Hide completed" : `Show ${goalsDone} completed`}</button>}
+            </div>
+          </div>
           <div className="goal-list">
-            {focused.map((row) => {
+            {shownFocused.map((row) => {
               const done = row.status === "Done";
               const overdue = isOverdue(row, today);
               return (
@@ -247,7 +288,7 @@ function RunPlan() {
                 </div>
               );
             })}
-            {goals.map((goal) => (
+            {shownGoals.map((goal) => (
               <div className={`goal-row ${goal.done ? "done" : ""}`} key={goal.id}>
                 <button className="checkbox" onClick={() => toggleGoal(goal.id)} aria-label={`${goal.done ? "Uncheck" : "Check"} ${goal.text}`}>{goal.done && <Icon name="check" size={13}/>}</button>
                 <div className="goal-body">
@@ -262,6 +303,7 @@ function RunPlan() {
               </div>
             ))}
             {goals.length === 0 && focused.length === 0 && <p className="empty">No goals yet. What are you chasing this season?</p>}
+            {goals.length + focused.length > 0 && shownGoals.length + shownFocused.length === 0 && <p className="empty">Every goal here is complete.</p>}
           </div>
           <form className="quick-add with-extra" onKeyDown={submitOnEnter} onSubmit={(event) => { event.preventDefault(); addGoal(); }}>
             <input value={goalText} onChange={(event) => setGoalText(event.target.value)} placeholder="Add a long-term goal..." aria-label="New goal"/>
