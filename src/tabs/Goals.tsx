@@ -15,6 +15,7 @@ export default function Goals() {
   const [typeFilter, setTypeFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   // "only" focuses on the status, "hide" removes it; clicking a card cycles only → hide → all.
+  // Done items are always hidden unless the Done card is selected; clicking it again hides them.
   const [statusMode, setStatusMode] = useState<"only" | "hide">("only");
   const [query, setQuery] = useState("");
 
@@ -24,6 +25,7 @@ export default function Goals() {
   const q = query.trim().toLowerCase();
   const visible = rows.filter((row) =>
     (typeFilter === "All" || row.type === typeFilter) &&
+    (statusFilter === "Done" || row.status !== "Done") &&
     (statusFilter === "All" || (statusMode === "only" ? row.status === statusFilter : row.status !== statusFilter)) &&
     (!q || [row.skill, row.description, row.comments, row.type].some((text) => text.toLowerCase().includes(q))),
   );
@@ -36,6 +38,11 @@ export default function Goals() {
     setRows([...kept, ...added]);
   };
   const clickStatusCard = (status: GoalStatus) => {
+    if (status === "Done") {
+      if (statusFilter === "Done") setStatusFilter("All");
+      else { setStatusFilter("Done"); setStatusMode("only"); }
+      return;
+    }
     if (statusFilter !== status) { setStatusFilter(status); setStatusMode("only"); }
     else if (statusMode === "only") setStatusMode("hide");
     else setStatusFilter("All");
@@ -58,8 +65,9 @@ export default function Goals() {
       <div className="goal-stats">
         <div><span>Season progress</span><strong>{progress.toFixed(0)}%</strong><i><b style={{ width: `${progress}%` }}/></i></div>
         {statuses.map((status) => (
-          <button key={status} className={`goal-stat ${statusFilter === status ? (statusMode === "only" ? "active" : "excluded") : ""}`} onClick={() => clickStatusCard(status)} title={statusFilter !== status ? `Show only ${status}` : statusMode === "only" ? `Hide ${status}` : "Show all"}>
-            <span>{status}</span><strong className={`tone-${statusClass(status)}`}>{counts[status]}</strong>
+          <button key={status} className={`goal-stat ${statusFilter === status ? (statusMode === "only" ? "active" : "excluded") : status === "Done" ? "muted" : ""}`} onClick={() => clickStatusCard(status)}
+            title={status === "Done" ? (statusFilter === "Done" ? "Hide done items" : "Show done items") : statusFilter !== status ? `Show only ${status}` : statusMode === "only" ? `Hide ${status}` : "Show all"}>
+            <span>{status}{status === "Done" && statusFilter !== "Done" && <small> · hidden</small>}</span><strong className={`tone-${statusClass(status)}`}>{counts[status]}</strong>
           </button>
         ))}
       </div>
@@ -95,7 +103,7 @@ export default function Goals() {
             ) },
           ]}
         />
-        <p className="table-hint">Double-click a row or use the pencil to edit. Click a status to cycle it.</p>
+        <p className="table-hint">Double-click a row or use the pencil to edit. Click a status to cycle it. Done items are hidden: click the Done card above to show them, and again to hide them.</p>
       </Panel>
     </main>
   );
