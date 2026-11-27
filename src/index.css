@@ -520,6 +520,8 @@ input[type="range"] { width: 100%; accent-color: var(--red); height: 4px; margin
 .goal-stat.active { border-color: var(--red); }
 .goal-stat.excluded { border-style: dashed; opacity: .45; }
 .goal-stat.excluded strong { text-decoration: line-through; }
+.goal-stat.muted { border-style: dashed; }
+.goal-stat span small { font-size: inherit; letter-spacing: inherit; color: #55575c; }
 .tone-not-started { color: #bfc1c5; }
 .tone-in-progress { color: var(--amber); }
 .tone-done { color: var(--green); }
