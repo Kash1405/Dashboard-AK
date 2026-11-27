@@ -31,7 +31,8 @@ export default function GoalTimeline() {
   const [order, setOrder] = useTimelineOrder();
   const [hidden, setHidden] = useTimelineHidden();
   const [filter, setFilter] = useStored<"all" | "goal" | "item">("timeline.filter", "all");
-  const [showDone, setShowDone] = useStored("timeline.showDone", true);
+  // Done rows are hidden unless you choose to show them (new key, so the old "shown" default does not carry over).
+  const [showDone, setShowDone] = useStored("timeline.showDoneRows", false);
   const [showHidden, setShowHidden] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [bar, setBar] = useState<BarDrag | null>(null);
@@ -200,7 +201,7 @@ export default function GoalTimeline() {
             <button key={key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>
           ))}
           <span className="tl-filter-gap"/>
-          {doneCount > 0 && <button className={showDone ? "" : "active"} onClick={() => setShowDone(!showDone)} aria-pressed={!showDone}>{showDone ? `Hide ${doneCount} done` : `Show ${doneCount} done`}</button>}
+          {doneCount > 0 && <button className={showDone ? "active" : ""} onClick={() => setShowDone(!showDone)} aria-pressed={showDone}>{showDone ? `Hide ${doneCount} done` : `Show ${doneCount} done`}</button>}
           {hidden.length > 0 && <button className={showHidden ? "active" : ""} onClick={() => setShowHidden(!showHidden)} aria-pressed={showHidden}>{showHidden ? "Hide hidden rows" : `Show ${hidden.filter((id) => ids.includes(id)).length} hidden`}</button>}
         </div>
 
